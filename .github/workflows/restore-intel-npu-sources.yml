@@ -1,0 +1,80 @@
+name: restore-intel-npu-sources
+
+on:
+  workflow_dispatch:
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/intel-npu
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Restore and patch settings.rs
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://cdn.jsdelivr.net/gh/gkuhns/Handy@b1b2d9f9072e55902a46ca6cc655e5893ed7a91d/src-tauri/src/settings.rs" \
+            -o src-tauri/src/settings.rs
+          python3 <<'PY'
+          from pathlib import Path
+          p = Path("src-tauri/src/settings.rs")
+          s = p.read_text()
+          old = """    #[serde(rename = \"directml\")]
+    DirectMl,
+    Rocm,
+}"""
+          new = """    #[serde(rename = \"directml\")]
+    DirectMl,
+    Rocm,
+    /// Intel OpenVINO (CPU/GPU/NPU via OpenVINO EP).
+    OpenVino,
+    /// Intel NPU via OpenVINO (`device_type=NPU`).
+    Npu,
+}"""
+          if "OpenVino" in s and "Npu," in s:
+              print("settings already has OpenVino/Npu")
+          elif old not in s:
+              raise SystemExit("settings pattern not found")
+          else:
+              p.write_text(s.replace(old, new, 1))
+              print("settings patched")
+          PY
+
+      - name: Patch transcription.rs
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+          p = Path("src-tauri/src/managers/transcription.rs")
+          t = p.read_text()
+          old = """        OrtAcceleratorSetting::Rocm => accel::OrtAccelerator::Rocm,
+    };"""
+          new = """        OrtAcceleratorSetting::Rocm => accel::OrtAccelerator::Rocm,
+        OrtAcceleratorSetting::OpenVino => accel::OrtAccelerator::OpenVino,
+        OrtAcceleratorSetting::Npu => accel::OrtAccelerator::Npu,
+    };"""
+          if "OrtAccelerator::Npu" in t:
+              print("transcription already patched")
+          elif old not in t:
+              raise SystemExit("transcription pattern not found")
+          else:
+              p.write_text(t.replace(old, new, 1))
+              print("transcription patched")
+          PY
+
+      - name: Commit and push
+        run: |
+          set -euo pipefail
+          git config user.name "gkuhns"
+          git config user.email "gkuhns@gmail.com"
+          git add src-tauri/src/settings.rs src-tauri/src/managers/transcription.rs
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git commit -m "feat(intel-npu): restore settings.rs and map OpenVino/Npu accelerators"
+          git push origin HEAD:feature/intel-npu
