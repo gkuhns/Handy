@@ -1,0 +1,11 @@
+--- a/src-tauri/src/managers/transcription.rs
++++ b/src-tauri/src/managers/transcription.rs
+@@ -1861,6 +1861,8 @@
+         OrtAcceleratorSetting::Cuda => accel::OrtAccelerator::Cuda,
+         OrtAcceleratorSetting::DirectMl => accel::OrtAccelerator::DirectMl,
+         OrtAcceleratorSetting::Rocm => accel::OrtAccelerator::Rocm,
++        OrtAcceleratorSetting::OpenVino => accel::OrtAccelerator::OpenVino,
++        OrtAcceleratorSetting::Npu => accel::OrtAccelerator::Npu,
+     };
+     accel::set_ort_accelerator(ort_pref);
+     info!("ORT accelerator set to: {}", ort_pref);

@@ -1,0 +1,13 @@
+--- a/src-tauri/src/settings.rs
++++ b/src-tauri/src/settings.rs
+@@ -299,6 +299,10 @@
+     #[serde(rename = "directml")]
+     DirectMl,
+     Rocm,
++    /// Intel OpenVINO (CPU/GPU/NPU via OpenVINO EP).
++    OpenVino,
++    /// Intel NPU via OpenVINO (`device_type=NPU`).
++    Npu,
+ }
+ 
+ #[derive(Clone, Serialize, Deserialize, Type)]
