@@ -24,7 +24,7 @@ export ORT_LIB_LOCATION=/path/to/onnxruntime/lib
 export ORT_PREFER_DYNAMIC_LINK=1
 ```
 
-## Current Handy build (no OpenVINO yet)
+## Current Handy build
 
 ```bash
 git clone https://github.com/gkuhns/Handy.git
@@ -34,40 +34,13 @@ bun install
 bun tauri dev
 ```
 
-ONNX models will use CPU. Whisper-family models can still use GPU via transcribe-cpp where available.
+ONNX models will use CPU until OpenVINO EP is active. Whisper-family models can still use GPU via transcribe-cpp where available.
 
-## After upstream OpenVINO support exists
+## Drivers (installer)
 
-Expected pattern (illustrative — exact feature names may differ):
+On Windows, the NSIS package auto-installs the official WHQL Intel NPU driver and OpenVINO Runtime **only when**:
 
-```toml
-# src-tauri/Cargo.toml (Windows x86_64 example)
-transcribe-rs = { version = "…", features = ["onnx", "ort-openvino"] }
-```
+1. An Intel NPU is detected, and
+2. The NPU driver is not already installed/healthy.
 
-Then:
-
-```bash
-bun tauri dev
-# In app: set ort_accelerator to openvino / npu, reload model
-```
-
-## Verification checklist
-
-1. OpenVINO device query lists `NPU` (via OpenVINO hello_query_device or ORT provider options).
-2. Handy logs show selected ORT accelerator after `apply_accelerator_settings`.
-3. Load Parakeet (or other ONNX model); confirm no silent CPU fallback unless NPU fails.
-4. Measure RTF vs CPU-only on the same utterance.
-5. Toggle back to CPU; confirm model reload and stable transcription.
-6. Run on a machine **without** NPU: app starts; NPU option disabled or falls back.
-
-## Debug
-
-- Enable Handy debug mode / verbose logging (`LogLevel::Debug`).
-- Check Windows Event Viewer / Intel NPU driver status if session creation fails.
-- Confirm OpenVINO and ORT major versions are a supported pair (see ONNX Runtime OpenVINO EP docs).
-
-## Non-goals for local testing
-
-- Do not require AVX2-only ORT builds.
-- Do not block app launch on missing OpenVINO.
+See [DRIVERS.md](./DRIVERS.md) for Microsoft-accepted and Linux official sources.
