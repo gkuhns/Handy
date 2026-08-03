@@ -2,6 +2,10 @@ name: restore-intel-npu-sources
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main, feature/intel-npu]
+    paths:
+      - 'docs/intel-npu/.restore-marker'
 
 jobs:
   restore:
@@ -17,7 +21,6 @@ jobs:
       - name: Restore settings.rs from known-good base and patch OpenVino/Npu
         run: |
           set -euo pipefail
-          # Known-good full settings.rs from before any NPU work (pre-stub)
           curl -fsSL "https://cdn.jsdelivr.net/gh/gkuhns/Handy@b1b2d9f9072e55902a46ca6cc655e5893ed7a91d/src-tauri/src/settings.rs" \
             -o src-tauri/src/settings.rs
           python3 <<'PY'
@@ -48,7 +51,6 @@ jobs:
       - name: Restore transcription.rs from known-good base and patch mapping
         run: |
           set -euo pipefail
-          # Full original transcription.rs from commit before the accidental placeholder
           curl -fsSL "https://raw.githubusercontent.com/gkuhns/Handy/b0b05002d2ef1ea40c231740c9059916e60b46f6/src-tauri/src/managers/transcription.rs" \
             -o src-tauri/src/managers/transcription.rs
           python3 <<'PY'
