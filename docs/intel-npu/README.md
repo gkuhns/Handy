@@ -1,46 +1,51 @@
-# Intel NPU Acceleration for Handy
+# Intel NPU Acceleration for Handy (gkuhns fork only)
 
-**Branch:** `feature/intel-npu`  
-**Fork:** https://github.com/gkuhns/Handy  
-**Upstream:** https://github.com/cjpais/Handy  
-**Goal:** Run ONNX-based ASR models (Parakeet, Moonshine, SenseVoice, etc.) on Intel Neural Processing Units via OpenVINO, without burning CPU/GPU cycles.
+**No changes pushed to cjpais.**
 
-## Why this exists
+## What works
 
-Handy already supports:
+1. **transcribe-rs fork** — https://github.com/gkuhns/transcribe-rs  
+   - `ort-openvino` feature  
+   - `OrtAccelerator::OpenVino` and `OrtAccelerator::Npu`  
+   - OpenVINO EP registration; NPU uses `device_type=NPU`  
+   - Optional env: `HANDY_OPENVINO_DEVICE` / `OPENVINO_DEVICE`
 
-- **transcribe-cpp (GGML/GGUF Whisper-family):** Metal / Vulkan GPU backends
-- **transcribe-rs (ONNX):** CPU today in shipped Windows builds; optional CUDA / DirectML / ROCm / CoreML / WebGPU via `ort` features (DirectML was deliberately dropped from Handy Windows builds for AVX2 baseline / crash reasons)
+2. **Handy `feature/intel-npu`** — https://github.com/gkuhns/Handy/tree/feature/intel-npu  
+   - `src-tauri/Cargo.toml` depends on the fork with `ort-openvino`  
+   - Docs + apply patches under `docs/intel-npu/`
 
-There is **no Intel NPU path** yet. Intel Core Ultra and similar chips expose an NPU that is ideal for low-power, always-on ASR. The maintainer has welcomed PRs and noted that bundling/CI—not the inference call itself—is the hard part.
+## One-time source finish (two tiny edits)
 
-## Recommended approach
+```bash
+git clone https://github.com/gkuhns/Handy.git && cd Handy
+git checkout feature/intel-npu
+patch -p1 < docs/intel-npu/patches/settings.rs.patch
+patch -p1 < docs/intel-npu/patches/transcription.rs.patch
+```
 
-Prefer a **unified interface** over vendor-specific kernels:
+Or hand-edit:
 
-1. Primary target: **ONNX Runtime + OpenVINO Execution Provider** targeting device `NPU` (also works for Intel CPU/GPU via the same EP).
-2. Secondary / longer-term: OpenVINO GenAI Whisper pipelines or Windows ML plugin EPs.
-3. Avoid hard-coding a single NPU SKU; abstract behind accelerator selection already present in settings.
+- `OrtAcceleratorSetting`: add `OpenVino` and `Npu`
+- `apply_accelerator_settings`: map those to `accel::OrtAccelerator::{OpenVino,Npu}`
 
-## Document map (read in order)
+## Run
+
+1. Install **OpenVINO** + **Intel NPU driver**.
+2. `source` OpenVINO `setupvars` (or set `OPENVINO_INSTALL_DIR`).
+3. `bun install && bun tauri dev`
+4. Set ONNX accelerator to **npu** (or store key `ort_accelerator` = `"npu"`).
+5. Load an ONNX model (e.g. Parakeet) and transcribe.
+
+If the OpenVINO EP is missing, ORT falls back to CPU.
+
+## Docs map
 
 | File | Purpose |
 |------|---------|
-| [ARCHITECTURE.md](./ARCHITECTURE.md) | How acceleration works today; exact insertion points |
-| [CONSTRAINTS.md](./CONSTRAINTS.md) | Why OpenVINO is not a one-line feature flag |
-| [IMPLEMENTATION_PLAN.md](./IMPLEMENTATION_PLAN.md) | Ordered work items from scaffold → shippable |
-| [BUILD_AND_TEST.md](./BUILD_AND_TEST.md) | Dev machine setup, env vars, verification |
-| [CONTEXT.md](./CONTEXT.md) | Dense summary for AI agents / PR descriptions |
-
-## Status (2026-08-03)
-
-- [x] Fork + branch created
-- [x] Documentation and context packs
-- [ ] Upstream `ort` / `transcribe-rs` OpenVINO EP support (blocker for clean integration)
-- [ ] Handy settings + UI + packaging for OpenVINO/NPU
-- [ ] CI matrix entry for Intel NPU hardware (or documented manual test gate)
-
-## Related upstream discussion
-
-- Handy Discussion #726 (NPU request; maintainer: PRs welcome; bundling is the blocker)
-- Handy PR #1058 (CPU/GPU accelerator selection + experimental DirectML era)
+| [ARCHITECTURE.md](./ARCHITECTURE.md) | Insertion points |
+| [CONSTRAINTS.md](./CONSTRAINTS.md) | Packaging / AVX / ops |
+| [IMPLEMENTATION_PLAN.md](./IMPLEMENTATION_PLAN.md) | Phases |
+| [BUILD_AND_TEST.md](./BUILD_AND_TEST.md) | Build/test |
+| [APPLY.md](./APPLY.md) | Patch commands |
+| [STATUS.md](./STATUS.md) | Snapshot |
+| [CONTEXT.md](./CONTEXT.md) | AI context pack |
