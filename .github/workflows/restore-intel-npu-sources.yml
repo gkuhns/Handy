@@ -18,64 +18,113 @@ jobs:
           ref: feature/intel-npu
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Restore settings.rs from upstream main and patch OpenVino/Npu
+      - name: Restore settings.rs from known-good base and patch OpenVino/Npu
         run: |
           set -euo pipefail
-          curl -fsSL "https://raw.githubusercontent.com/cjpais/Handy/main/src-tauri/src/settings.rs" -o src-tauri/src/settings.rs
+          curl -fsSL "https://cdn.jsdelivr.net/gh/gkuhns/Handy@b1b2d9f9072e55902a46ca6cc655e5893ed7a91d/src-tauri/src/settings.rs" \
+            -o src-tauri/src/settings.rs
           python3 <<'PY'
           from pathlib import Path
           p = Path("src-tauri/src/settings.rs")
           s = p.read_text()
+          old = """    #[serde(rename = \"directml\")]
+    DirectMl,
+    Rocm,
+}"""
+          new = """    #[serde(rename = \"directml\")]
+    DirectMl,
+    Rocm,
+    /// Intel OpenVINO (CPU/GPU/NPU via OpenVINO EP).
+    OpenVino,
+    /// Intel NPU via OpenVINO (`device_type=NPU`).
+    Npu,
+}"""
           if "OpenVino" in s and "Npu," in s:
               print("settings already has OpenVino/Npu")
+          elif old not in s:
+              raise SystemExit("settings pattern not found")
           else:
-              # Flexible insert before the closing of the enum
-              needle = "    Rocm,\n}"
-              if needle not in s:
-                  # try with possible whitespace
-                  import re
-                  m = re.search(r"    Rocm,\s*\n\}", s)
-                  if not m:
-                      raise SystemExit("settings pattern (Rocm,) not found")
-                  s = s[:m.start()] + "    Rocm,\n    /// Intel OpenVINO (CPU/GPU/NPU via OpenVINO EP).\n    OpenVino,\n    /// Intel NPU via OpenVINO (`device_type=NPU`).\n    Npu,\n}" + s[m.end():]
-              else:
-                  s = s.replace(needle, "    Rocm,\n    /// Intel OpenVINO (CPU/GPU/NPU via OpenVINO EP).\n    OpenVino,\n    /// Intel NPU via OpenVINO (`device_type=NPU`).\n    Npu,\n}", 1)
-              p.write_text(s)
-              print("settings patched with OpenVino/Npu")
-          print("settings.rs lines:", len(p.read_text().splitlines()))
-          assert "OpenVino" in p.read_text()
+              p.write_text(s.replace(old, new, 1))
+              print("settings patched")
           PY
 
-      - name: Restore transcription.rs from upstream and patch mapping
+      - name: Restore transcription.rs from known-good base and patch mapping
         run: |
           set -euo pipefail
-          curl -fsSL "https://raw.githubusercontent.com/cjpais/Handy/main/src-tauri/src/managers/transcription.rs" -o src-tauri/src/managers/transcription.rs
+          curl -fsSL "https://raw.githubusercontent.com/gkuhns/Handy/b0b05002d2ef1ea40c231740c9059916e60b46f6/src-tauri/src/managers/transcription.rs" \
+            -o src-tauri/src/managers/transcription.rs
           python3 <<'PY'
           from pathlib import Path
           p = Path("src-tauri/src/managers/transcription.rs")
           t = p.read_text()
+          old = """        OrtAcceleratorSetting::Rocm => accel::OrtAccelerator::Rocm,
+    };"""
+          new = """        OrtAcceleratorSetting::Rocm => accel::OrtAccelerator::Rocm,
+        OrtAcceleratorSetting::OpenVino => accel::OrtAccelerator::OpenVino,
+        OrtAcceleratorSetting::Npu => accel::OrtAccelerator::Npu,
+    };"""
           if "OrtAccelerator::Npu" in t:
               print("transcription already patched")
+          elif old not in t:
+              raise SystemExit("transcription pattern not found")
           else:
-              old = "OrtAcceleratorSetting::Rocm => accel::OrtAccelerator::Rocm,"
-              if old not in t:
-                  raise SystemExit("transcription Rocm arm not found")
-              t = t.replace(old, old + "\n        OrtAcceleratorSetting::OpenVino => accel::OrtAccelerator::OpenVino,\n        OrtAcceleratorSetting::Npu => accel::OrtAccelerator::Npu,", 1)
-              p.write_text(t)
+              p.write_text(t.replace(old, new, 1))
               print("transcription patched")
-          print("transcription.rs lines:", len(p.read_text().splitlines()))
-          assert "OrtAccelerator::Npu" in p.read_text()
           PY
+
+      - name: Restore full installer.nsi + ensure relative path include
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://raw.githubusercontent.com/gkuhns/Handy/b3596dc90c36c1f402376c5a377b75b5e212400d/src-tauri/nsis/installer.nsi" \
+            -o src-tauri/nsis/installer.nsi
+          python3 <<'PY'
+          from pathlib import Path
+          p = Path("src-tauri/nsis/installer.nsi")
+          s = p.read_text()
+          if r'..\..\..\..\nsis\intel-npu-drivers.nsh' not in s and r'..\\..\\..\\..\\nsis\\intel-npu-drivers.nsh' not in s:
+              s = s.replace('!include "intel-npu-drivers.nsh"',
+                            '; Path is relative to Tauri NSIS workdir: target/release/nsis/x64/\n!include "..\\..\\..\\..\\nsis\\intel-npu-drivers.nsh"')
+              if r'..\..\..\..\nsis\intel-npu-drivers.nsh' not in s:
+                  needle = "${StrLoc}\n\n{{#if installer_hooks}}"
+                  insert = """${StrLoc}
+
+; Intel NPU auto-driver support (feature/intel-npu)
+; Path is relative to Tauri's NSIS workdir: target/release/nsis/x64/
+!include "..\\..\\..\\..\\nsis\\intel-npu-drivers.nsh"
+
+{{#if installer_hooks}}"""
+                  if needle in s:
+                      s = s.replace(needle, insert, 1)
+                  else:
+                      raise SystemExit("Could not locate insertion point for NPU include")
+              p.write_text(s)
+              print("installer.nsi updated with relative include")
+          else:
+              print("installer.nsi already has relative include")
+          lines = len(p.read_text().splitlines())
+          print(f"installer.nsi lines: {lines}")
+          if lines < 1000:
+              raise SystemExit(f"installer.nsi still too short ({lines} lines)")
+          PY
+
+      - name: Ensure intel-npu-drivers.nsh exists
+        run: |
+          set -euo pipefail
+          if [ ! -f src-tauri/nsis/intel-npu-drivers.nsh ]; then
+            echo "intel-npu-drivers.nsh missing - cannot restore"
+            exit 1
+          fi
+          echo "intel-npu-drivers.nsh present ($(wc -l < src-tauri/nsis/intel-npu-drivers.nsh) lines)"
 
       - name: Commit and push
         run: |
           set -euo pipefail
           git config user.name "gkuhns"
           git config user.email "gkuhns@gmail.com"
-          git add src-tauri/src/settings.rs src-tauri/src/managers/transcription.rs
+          git add src-tauri/src/settings.rs src-tauri/src/managers/transcription.rs src-tauri/nsis/installer.nsi src-tauri/nsis/intel-npu-drivers.nsh || true
           if git diff --cached --quiet; then
             echo "No changes to commit"
             exit 0
           fi
-          git commit -m "feat(intel-npu): restore full settings.rs + transcription.rs from upstream with OpenVino/Npu"
+          git commit -m "fix(intel-npu): restore full settings, transcription, and complete NSIS installer.nsi with relative NPU include"
           git push origin HEAD:feature/intel-npu
