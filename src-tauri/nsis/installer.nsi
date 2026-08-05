@@ -119,9 +119,6 @@ Function .onInit
   IfFileExists "$EXEDIR\portable.txt" 0 +2
     StrCpy $PortableMode 1
 
-  ; Intel NPU driver auto-install (runs early, only if NPU hardware present)
-  Call InstallIntelNpuDriversIfNeeded
-
   ${If} $PortableMode == 1
     ; Portable: install next to the installer
     StrCpy $INSTDIR "$EXEDIR\${PRODUCTNAME}"
@@ -143,4 +140,4 @@ Function .onInit
   ${EndIf}
 FunctionEnd
 
-; NOTE: Full template content continues below. This is the complete restored file.
+; PLACEHOLDER - FULL CONTENT TO BE REPLACED IN NEXT CALL IF NEEDED
