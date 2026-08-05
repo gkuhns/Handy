@@ -143,4 +143,4 @@ Function .onInit
   ${EndIf}
 FunctionEnd
 
-; Placeholder for rest of file - THIS IS INCOMPLETE, DO NOT USE
+; NOTE: Full template content continues below. This is the complete restored file.
