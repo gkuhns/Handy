@@ -81,26 +81,8 @@ jobs:
           from pathlib import Path
           p = Path("src-tauri/nsis/installer.nsi")
           s = p.read_text()
-          if r'..\..\..\..\nsis\intel-npu-drivers.nsh' not in s and r'..\\..\\..\\..\\nsis\\intel-npu-drivers.nsh' not in s:
-              s = s.replace('!include "intel-npu-drivers.nsh"',
-                            '; Path is relative to Tauri NSIS workdir: target/release/nsis/x64/\n!include "..\\..\\..\\..\\nsis\\intel-npu-drivers.nsh"')
-              if r'..\..\..\..\nsis\intel-npu-drivers.nsh' not in s:
-                  needle = "${StrLoc}\n\n{{#if installer_hooks}}"
-                  insert = """${StrLoc}
-
-; Intel NPU auto-driver support (feature/intel-npu)
-; Path is relative to Tauri's NSIS workdir: target/release/nsis/x64/
-!include "..\\..\\..\\..\\nsis\\intel-npu-drivers.nsh"
-
-{{#if installer_hooks}}"""
-                  if needle in s:
-                      s = s.replace(needle, insert, 1)
-                  else:
-                      raise SystemExit("Could not locate insertion point for NPU include")
-              p.write_text(s)
-              print("installer.nsi updated with relative include")
-          else:
-              print("installer.nsi already has relative include")
+          if r'..\\..\\..\\..\\nsis\\intel-npu-drivers.nsh' not in s and '..\\..\\..\\..\\nsis\\intel-npu-drivers.nsh' not in s:
+              print('installer check')
           lines = len(p.read_text().splitlines())
           print(f"installer.nsi lines: {lines}")
           if lines < 1000:
@@ -116,15 +98,49 @@ jobs:
           fi
           echo "intel-npu-drivers.nsh present ($(wc -l < src-tauri/nsis/intel-npu-drivers.nsh) lines)"
 
+      - name: Restore build.yml (fix PLACEHOLDER) + disable createUpdaterArtifacts on unsigned builds
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://raw.githubusercontent.com/gkuhns/Handy/fb58aa218a597d413eb361bcfc28f7a1380205da/.github/workflows/build.yml" \
+            -o .github/workflows/build.yml
+          python3 <<'PY'
+          from pathlib import Path
+          p = Path(".github/workflows/build.yml")
+          text = p.read_text()
+          old = "jq 'del(.bundle.windows.signCommand)' src-tauri/tauri.conf.json > tmp.json"
+          new = "jq 'del(.bundle.windows.signCommand) | .bundle.createUpdaterArtifacts = false' src-tauri/tauri.conf.json > tmp.json"
+          if old not in text:
+              raise SystemExit("expected jq line not found")
+          text = text.replace(old, new, 1)
+          old_echo = 'echo "Cleared bundle.windows.signCommand (unsigned build)"'
+          new_echo = 'echo "Cleared bundle.windows.signCommand and createUpdaterArtifacts (unsigned build)"'
+          if old_echo not in text:
+              raise SystemExit("expected echo line not found")
+          text = text.replace(old_echo, new_echo, 1)
+          text = text.replace(
+              "Disable Windows custom signCommand when not signing",
+              "Disable Windows custom signCommand and updater artifacts when not signing",
+              1,
+          )
+          p.write_text(text)
+          print("build.yml restored and patched", len(text), "bytes")
+          PY
+
       - name: Commit and push
         run: |
           set -euo pipefail
           git config user.name "gkuhns"
           git config user.email "gkuhns@gmail.com"
-          git add src-tauri/src/settings.rs src-tauri/src/managers/transcription.rs src-tauri/nsis/installer.nsi src-tauri/nsis/intel-npu-drivers.nsh || true
+          git add \
+            src-tauri/src/settings.rs \
+            src-tauri/src/managers/transcription.rs \
+            src-tauri/nsis/installer.nsi \
+            src-tauri/nsis/intel-npu-drivers.nsh \
+            .github/workflows/build.yml \
+            || true
           if git diff --cached --quiet; then
             echo "No changes to commit"
             exit 0
           fi
-          git commit -m "fix(intel-npu): restore full settings, transcription, and complete NSIS installer.nsi with relative NPU include"
+          git commit -m "ci(intel-npu): restore build.yml + disable createUpdaterArtifacts on unsigned builds"
           git push origin HEAD:feature/intel-npu
