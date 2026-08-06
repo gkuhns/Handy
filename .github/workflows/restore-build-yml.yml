@@ -1,0 +1,50 @@
+name: "Restore build.yml (intel-npu)"
+
+on:
+  workflow_dispatch:
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: feature/intel-npu
+
+      - name: Restore build.yml from known-good commit and patch updater disable
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://raw.githubusercontent.com/gkuhns/Handy/fb58aa218a597d413eb361bcfc28f7a1380205da/.github/workflows/build.yml" \
+            -o .github/workflows/build.yml
+
+          python3 << 'PY'
+          from pathlib import Path
+          p = Path(".github/workflows/build.yml")
+          text = p.read_text()
+          old = "jq 'del(.bundle.windows.signCommand)' src-tauri/tauri.conf.json > tmp.json"
+          new = "jq 'del(.bundle.windows.signCommand) | .bundle.createUpdaterArtifacts = false' src-tauri/tauri.conf.json > tmp.json"
+          if old not in text:
+              raise SystemExit("expected jq line not found")
+          text = text.replace(old, new, 1)
+          old_echo = 'echo "Cleared bundle.windows.signCommand (unsigned build)"'
+          new_echo = 'echo "Cleared bundle.windows.signCommand and createUpdaterArtifacts (unsigned build)"'
+          if old_echo not in text:
+              raise SystemExit("expected echo line not found")
+          text = text.replace(old_echo, new_echo, 1)
+          old_name = "Disable Windows custom signCommand when not signing"
+          new_name = "Disable Windows custom signCommand and updater artifacts when not signing"
+          text = text.replace(old_name, new_name, 1)
+          p.write_text(text)
+          print("patched ok")
+          PY
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows/build.yml
+          git status
+          git diff --cached --stat
+          git commit -m "ci(intel-npu): restore build.yml + disable createUpdaterArtifacts on unsigned builds"
+          git push origin HEAD:feature/intel-npu
