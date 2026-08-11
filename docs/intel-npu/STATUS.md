@@ -1,66 +1,78 @@
 # Status — Intel NPU path (no upstream cjpais push)
 
-**Date:** 2026-08-10
+**Date:** 2026-08-11
 
-## Critical finding (why NPU graph stays flat)
+## Critical finding (why NPU graph stayed flat)
 
-The ONNX Runtime binary downloaded by the `ort` crate (Microsoft prebuilts via the pyke CDN) **does not include the OpenVINO Execution Provider**.
+Microsoft/pyke prebuilt ONNX Runtime **does not include the OpenVINO Execution Provider**.
+Enabling `ort-openvino` only adds Rust bindings. Selecting `npu` requested `device_type=NPU`,
+but registration failed and inference fell back (GPU/CPU activity, NPU graph flat).
 
-- Enabling the Cargo feature `ort-openvino` only adds Rust bindings.
-- There are **no** prebuilt distributions in ort’s `dist.tsv` that contain OpenVINO for Windows x64.
-- When ONNX Acceleration is set to `npu`, code correctly requests `OpenVINO` with `device_type=NPU`, but EP registration fails.
-- Inference falls back (CPU and/or other available paths). Task Manager NPU graph stays flat; GPU may still show activity from other work or partial paths.
+## Fix in progress (2026-08-11)
 
-`transcribe-rs` now calls `is_available()` and logs a clear error when the EP is missing so this is diagnosable in app logs.
+`gkuhns/transcribe-rs` now:
 
-### What is required for real NPU use
+1. Calls `OpenVINO::is_available()` and logs a clear error when the EP is missing.
+2. Attempts to **register Intel’s OpenVINO EP plugin** at runtime via
+   `Environment::register_ep_library` (`onnxruntime_providers_openvino.dll`).
+3. Selects NPU hardware devices with `SessionBuilder::with_devices` (ORT V2 API).
+4. Falls back to the classic EP list with explicit warnings if the plugin is absent.
 
-1. **Intel NPU driver** (installer already attempts this when NPU PnP is detected).
-2. **OpenVINO Runtime** — e.g.
-   ```
-   winget install --id Intel.OpenVINOToolkit.2026.2.0 -e --source winget
-   ```
-3. An **ONNX Runtime build (or plugin EP)** that actually includes OpenVINO:
-   - Intel’s OpenVINO EP plugin for ORT (NuGet `Intel.ML.OnnxRuntime.EP.OpenVINO` / Python `onnxruntime-ep-openvino`), **or**
-   - A custom ORT built with OpenVINO, loaded via `load-dynamic` / `ORT_DYLIB_PATH`.
+### Plugin search order
 
-Until (3) is wired, selecting `npu` in Handy cannot light the NPU graph.
+1. `HANDY_OPENVINO_EP_LIBRARY` or `ORT_OPENVINO_EP_LIBRARY` env vars
+2. Common install paths under `C:\Program Files\Intel\...`
+3. `onnxruntime_providers_openvino.dll` next to the Handy executable or in `plugins\`
+
+### What you need on the machine
+
+```powershell
+# 1) OpenVINO Runtime (required for the plugin’s native deps)
+winget install --id Intel.OpenVINOToolkit.2026.2.0 -e --source winget
+
+# 2) Place the OpenVINO EP plugin DLL where Handy can find it, e.g.:
+#    - Next to Handy.exe as onnxruntime_providers_openvino.dll
+#    - Or set:
+# $env:HANDY_OPENVINO_EP_LIBRARY = "C:\path\to\onnxruntime_providers_openvino.dll"
+
+# Plugin packages:
+# - NuGet: Intel.ML.OnnxRuntime.EP.OpenVINO
+# - PyPI: onnxruntime-ep-openvino (extract the .dll from the wheel)
+```
+
+### Expected log lines when it works
+
+- `Registered OpenVINO EP plugin from ...`
+- `Selecting OpenVINO device: ep=... hw=NPU ...`
+- `Session using OpenVINO EP via plugin device selection`
+- Task Manager **NPU** graph should move during Parakeet/Moonshine/Canary transcription
+
+### Expected log lines when plugin is still missing
+
+- `OpenVINO EP plugin not registered (...)`
+- `OpenVINO plugin devices unavailable; falling back to classic EP list`
+- `OpenVINO EP is NOT available in this ONNX Runtime binary`
 
 ## Completed
 
 | Item | Location |
 |------|----------|
 | Fork transcribe-rs | https://github.com/gkuhns/transcribe-rs |
-| OpenVINO/NPU in OrtAccelerator + session EP | `src/accel.rs`, `src/onnx/session.rs` |
-| Explicit `is_available()` + error log for missing EP | `session.rs` (2026-08-10) |
-| `ort-openvino` feature | `Cargo.toml` |
-| Handy depends on fork with openvino | `src-tauri/Cargo.toml` on `feature/intel-npu` |
-| Settings `OpenVino` / `Npu` + mapping | `settings.rs`, `transcription.rs` |
-| NSIS PnP detection + NPU driver install | `nsis/intel-npu-drivers.nsh` |
-| Unsigned Windows NPU build workflow | `.github/workflows/build-windows-npu.yml` |
-| Architecture / plan docs | `docs/intel-npu/` |
+| OpenVINO/NPU accelerator enums | `src/accel.rs` |
+| Plugin registration + NPU device select | `src/onnx/openvino_plugin.rs` |
+| Session path uses plugin then fallback | `src/onnx/session.rs` |
+| Handy settings OpenVino/Npu | `settings.rs`, `transcription.rs` |
+| NSIS NPU driver install | `nsis/intel-npu-drivers.nsh` |
+| Unsigned Windows NPU build workflow | `build-windows-npu.yml` |
 
-## Next (to make NPU actually run)
+## Still todo
 
-1. Switch ort to `load-dynamic` (or ship a custom ORT) and register Intel’s OpenVINO EP plugin at startup when NPU is selected.
-2. Installer: winget install OpenVINO Toolkit when NPU is detected (in addition to the NPU driver).
-3. Rebase / merge upstream Handy `main` (v0.9.5+) while preserving NPU wiring.
-4. Rebuild and re-test; expect log line `OpenVINO EP available — targeting device_type=NPU` and non-zero NPU graph.
-
-## How to build & run
-
-```bash
-git clone https://github.com/gkuhns/Handy.git
-cd Handy && git checkout feature/intel-npu
-# Install OpenVINO Runtime + NPU driver
-winget install --id Intel.OpenVINOToolkit.2026.2.0 -e --source winget
-bun install
-bun tauri dev
-# Set ort_accelerator to npu in app settings; fully quit and restart; unload model
-```
+1. Installer: winget-install OpenVINO Toolkit when NPU is detected; optionally ship or download the EP plugin DLL.
+2. Rebase Handy `feature/intel-npu` onto upstream v0.9.5+.
+3. Rebuild installer and re-test with plugin DLL present.
+4. (Optional) Bundle `onnxruntime_providers_openvino.dll` + OpenVINO runtime redistributables in the installer.
 
 ## Explicitly not done
 
-- No PR / push to cjpais/Handy or cjpais/transcribe-rs
-- No CI NPU hardware
-- OpenVINO EP not yet present inside the shipped ORT binary (see critical finding)
+- No PR to cjpais/Handy or cjpais/transcribe-rs
+- Plugin DLL not yet bundled in the installer artifact
