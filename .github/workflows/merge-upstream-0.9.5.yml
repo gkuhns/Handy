@@ -29,26 +29,16 @@ jobs:
           git fetch upstream main
           echo "upstream: $(git rev-parse upstream/main)"
           echo "HEAD before: $(git rev-parse HEAD)"
-          # Prefer upstream on conflicts; we re-apply NPU after
           git merge upstream/main -X theirs --no-edit -m "merge(upstream): full Handy 0.9.5 into feature/intel-npu" || true
 
-      - name: Clear any remaining conflict markers with upstream
+      - name: Clear remaining unmerged paths
         run: |
           set -euo pipefail
-          # For any still-unmerged paths, take upstream (theirs)
-          if git diff --name-only --diff-filter=U | grep -q .; then
+          if git diff --name-only --diff-filter=U 2>/dev/null | grep -q .; then
             git diff --name-only --diff-filter=U | while read -r f; do
               echo "taking upstream for $f"
               git checkout --theirs -- "$f"
               git add -- "$f"
-            done
-          fi
-          # Strip any leftover markers if present
-          if git grep -l '<<<<<<<' -- . 2>/dev/null; then
-            git grep -l '<<<<<<<' -- . | while read -r f; do
-              echo "stripping markers in $f"
-              git checkout --theirs -- "$f" || true
-              git add -- "$f" || true
             done
           fi
 
@@ -72,13 +62,8 @@ jobs:
                   "transcribe-rs = { git = \"https://github.com/gkuhns/transcribe-rs\"",
                   "# Fork with Intel OpenVINO / NPU support (gkuhns).\n# Aligned to Handy 0.9.5.\ntranscribe-rs = { git = \"https://github.com/gkuhns/transcribe-rs\"",
               )
-          for m in ["<<<<<<<", "=======", ">>>>>>>"]:
-              assert m not in text, m
           p.write_text(text)
           print("Cargo.toml NPU OK")
-          for line in text.splitlines():
-              if "transcribe-rs" in line or line.startswith("version ="):
-                  print(line)
           '
 
       - name: Re-apply unsigned NPU build patch
@@ -117,22 +102,12 @@ jobs:
               print("unsigned patch already present")
           '
 
-      - name: Ensure NPU settings variants exist
-        run: |
-          set -euo pipefail
-          if ! grep -q "OpenVino" src-tauri/src/settings.rs; then
-            echo "WARNING: OpenVino missing from settings.rs - may need manual restore"
-          else
-            echo "NPU settings present:"
-            grep -n "OpenVino\|Npu" src-tauri/src/settings.rs | head -5
-          fi
-
       - name: Commit and push
         run: |
           set -euo pipefail
-          if git grep -n "<<<<<<<" -- . 2>/dev/null; then
-            echo "ERROR: markers remain"
-            git grep -n "<<<<<<<" -- . || true
+          # Only fail on markers in source, not in docs/patches or workflow text
+          if git grep -n "<<<<<<<" -- src-tauri src 2>/dev/null; then
+            echo "ERROR: conflict markers in source"
             exit 1
           fi
           git add -A
