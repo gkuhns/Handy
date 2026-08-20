@@ -1,0 +1,123 @@
+name: Merge upstream 0.9.5 into feature/intel-npu
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout feature branch (full history)
+        uses: actions/checkout@v4
+        with:
+          ref: feature/intel-npu
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch upstream main
+        run: |
+          git remote add upstream https://github.com/cjpais/Handy.git || true
+          git fetch upstream main
+          git log --oneline -3 upstream/main
+
+      - name: Merge upstream main
+        run: |
+          set -e
+          git merge upstream/main --no-edit -m "merge(upstream): full Handy 0.9.5 into feature/intel-npu" || true
+          # Resolve Cargo.toml: take upstream then re-apply NPU fork
+          if [ -f src-tauri/Cargo.toml ]; then
+            if grep -q '<<<<<<' src-tauri/Cargo.toml 2>/dev/null || true; then
+              git checkout --theirs src-tauri/Cargo.toml || true
+            fi
+            python3 << 'PY'
+import re
+from pathlib import Path
+p = Path("src-tauri/Cargo.toml")
+text = p.read_text()
+text = re.sub(r'^version = ".*"', 'version = "0.9.5"', text, count=1, flags=re.M)
+text = re.sub(
+    r'transcribe-rs = \{[^}]+\}',
+    'transcribe-rs = { git = "https://github.com/gkuhns/transcribe-rs", default-features = false, features = ["onnx", "ort-openvino"] }',
+    text,
+    count=1,
+)
+if "Fork with Intel OpenVINO" not in text:
+    text = text.replace(
+        'transcribe-rs = { git = "https://github.com/gkuhns/transcribe-rs"',
+        '# Fork with Intel OpenVINO / NPU support (gkuhns). Not pushed upstream.\n# Aligned to Handy 0.9.5.\ntranscribe-rs = { git = "https://github.com/gkuhns/transcribe-rs"',
+    )
+p.write_text(text)
+print("Cargo.toml resolved")
+for line in text.splitlines():
+    if any(x in line for x in ["version =", "transcribe-rs", "transcribe-cpp", "whatlang", "handy-keys"]):
+        print(line)
+PY
+          fi
+          # Resolve build.yml: take upstream + unsigned patch
+          if [ -f .github/workflows/build.yml ]; then
+            if grep -q '<<<<<<' .github/workflows/build.yml 2>/dev/null || true; then
+              git checkout --theirs .github/workflows/build.yml || true
+            fi
+            python3 << 'PY'
+from pathlib import Path
+p = Path(".github/workflows/build.yml")
+lines = p.read_text().splitlines(keepends=True)
+if "Disable Windows signCommand" not in "".join(lines):
+    insert_at = None
+    for i, line in enumerate(lines):
+        if "Install SPIRV-Headers" in line or "SPIRV-Headers for transcribe-cpp" in line:
+            for j in range(i+1, len(lines)):
+                if lines[j].startswith("      - name:") or (lines[j].startswith("      #") and "transcribe-cpp ships" in lines[j]):
+                    insert_at = j
+                    break
+            break
+    if insert_at is not None:
+        patch = '''      - name: Disable Windows signCommand and updater artifacts when not signing
+        if: contains(inputs.platform, 'windows') && !inputs.sign-binaries
+        shell: bash
+        run: |
+          jq \'del(.bundle.windows.signCommand) | .bundle.createUpdaterArtifacts = false\' src-tauri/tauri.conf.json > tmp.json
+          mv tmp.json src-tauri/tauri.conf.json
+          echo "Cleared signCommand and createUpdaterArtifacts (unsigned build)"
+
+'''
+        lines.insert(insert_at, patch)
+        p.write_text("".join(lines))
+        print(f"Inserted unsigned patch at line {insert_at}")
+    else:
+        print("WARN: could not find insert point for unsigned patch")
+else:
+    print("Unsigned patch already present")
+PY
+          fi
+          # Abort if any conflict markers remain
+          if git grep -n '<<<<<<<' -- . 2>/dev/null; then
+            echo "ERROR: conflict markers remain"
+            exit 1
+          fi
+          git add -A
+          # Only commit if there is something to commit (merge may have auto-completed)
+          if ! git diff --cached --quiet; then
+            git commit -m "merge(upstream): full Handy 0.9.5 into feature/intel-npu
+
+- Cargo.toml: 0.9.5 + gkuhns/transcribe-rs ort-openvino
+- build.yml: upstream + unsigned NPU installer patch
+- NPU OpenVino/Npu settings preserved"
+          else
+            echo "Nothing to commit (merge already complete?)"
+          fi
+          grep -E 'version = |transcribe-rs|transcribe-cpp|OpenVino|Npu' src-tauri/Cargo.toml src-tauri/src/settings.rs | head -20
+
+      - name: Push feature branch
+        run: |
+          git push origin HEAD:feature/intel-npu
+          echo "Pushed $(git rev-parse HEAD)"
+          git log --oneline -5
