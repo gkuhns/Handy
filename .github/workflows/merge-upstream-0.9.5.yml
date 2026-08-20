@@ -29,14 +29,32 @@ jobs:
           git fetch upstream main
           echo "upstream: $(git rev-parse upstream/main)"
           echo "HEAD before: $(git rev-parse HEAD)"
-          git merge upstream/main --no-edit -m "merge(upstream): full Handy 0.9.5 into feature/intel-npu" || true
+          # Prefer upstream on conflicts; we re-apply NPU after
+          git merge upstream/main -X theirs --no-edit -m "merge(upstream): full Handy 0.9.5 into feature/intel-npu" || true
 
-      - name: Resolve Cargo.toml
+      - name: Clear any remaining conflict markers with upstream
         run: |
           set -euo pipefail
-          if grep -q '<<<<<<' src-tauri/Cargo.toml 2>/dev/null; then
-            git checkout --theirs src-tauri/Cargo.toml
+          # For any still-unmerged paths, take upstream (theirs)
+          if git diff --name-only --diff-filter=U | grep -q .; then
+            git diff --name-only --diff-filter=U | while read -r f; do
+              echo "taking upstream for $f"
+              git checkout --theirs -- "$f"
+              git add -- "$f"
+            done
           fi
+          # Strip any leftover markers if present
+          if git grep -l '<<<<<<<' -- . 2>/dev/null; then
+            git grep -l '<<<<<<<' -- . | while read -r f; do
+              echo "stripping markers in $f"
+              git checkout --theirs -- "$f" || true
+              git add -- "$f" || true
+            done
+          fi
+
+      - name: Re-apply NPU fork in Cargo.toml
+        run: |
+          set -euo pipefail
           python3 -c '
           import re
           from pathlib import Path
@@ -57,33 +75,19 @@ jobs:
           for m in ["<<<<<<<", "=======", ">>>>>>>"]:
               assert m not in text, m
           p.write_text(text)
-          print("Cargo.toml OK")
+          print("Cargo.toml NPU OK")
+          for line in text.splitlines():
+              if "transcribe-rs" in line or line.startswith("version ="):
+                  print(line)
           '
 
-      - name: Resolve lang_id and build.yml
+      - name: Re-apply unsigned NPU build patch
         run: |
           set -euo pipefail
-          if [ -f src-tauri/src/audio_toolkit/lang_id.rs ] && grep -q '<<<<<<' src-tauri/src/audio_toolkit/lang_id.rs 2>/dev/null; then
-            git checkout --theirs src-tauri/src/audio_toolkit/lang_id.rs
-          fi
-          if grep -q '<<<<<<' .github/workflows/build.yml 2>/dev/null; then
-            git checkout --theirs .github/workflows/build.yml
-          fi
           python3 -c '
           from pathlib import Path
           p = Path(".github/workflows/build.yml")
           lines = p.read_text().splitlines(keepends=True)
-          clean, skip = [], False
-          for line in lines:
-              if line.startswith("<<<<<<<"):
-                  skip = True; continue
-              if line.startswith("======="):
-                  skip = False; continue
-              if line.startswith(">>>>>>>"):
-                  skip = False; continue
-              if not skip:
-                  clean.append(line)
-          lines = clean
           if "Disable Windows signCommand" not in "".join(lines):
               insert_at = None
               for i, line in enumerate(lines):
@@ -105,16 +109,30 @@ jobs:
                       "\n"
                   )
                   lines.insert(insert_at, patch)
+                  p.write_text("".join(lines))
                   print("inserted unsigned patch")
-          p.write_text("".join(lines))
-          print("build.yml OK")
+              else:
+                  print("WARN: no insert point")
+          else:
+              print("unsigned patch already present")
           '
 
-      - name: Commit if needed
+      - name: Ensure NPU settings variants exist
+        run: |
+          set -euo pipefail
+          if ! grep -q "OpenVino" src-tauri/src/settings.rs; then
+            echo "WARNING: OpenVino missing from settings.rs - may need manual restore"
+          else
+            echo "NPU settings present:"
+            grep -n "OpenVino\|Npu" src-tauri/src/settings.rs | head -5
+          fi
+
+      - name: Commit and push
         run: |
           set -euo pipefail
           if git grep -n "<<<<<<<" -- . 2>/dev/null; then
             echo "ERROR: markers remain"
+            git grep -n "<<<<<<<" -- . || true
             exit 1
           fi
           git add -A
@@ -124,10 +142,7 @@ jobs:
             echo "Nothing to commit"
           fi
           echo "HEAD: $(git rev-parse HEAD)"
-          grep -E "version = |transcribe-rs|OpenVino|Npu" src-tauri/Cargo.toml src-tauri/src/settings.rs | head -20 || true
-
-      - name: Push with PUSH_TOKEN
-        run: |
           git push origin HEAD:feature/intel-npu
           echo "Pushed $(git rev-parse HEAD)"
           git log --oneline -8
+          grep -E "version = |transcribe-rs|OpenVino|Npu" src-tauri/Cargo.toml src-tauri/src/settings.rs | head -20 || true
