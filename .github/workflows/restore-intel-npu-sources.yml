@@ -16,131 +16,119 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: feature/intel-npu
+          fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Restore settings.rs from known-good base and patch OpenVino/Npu
+      - name: Configure git
         run: |
-          set -euo pipefail
-          curl -fsSL "https://cdn.jsdelivr.net/gh/gkuhns/Handy@b1b2d9f9072e55902a46ca6cc655e5893ed7a91d/src-tauri/src/settings.rs" \
-            -o src-tauri/src/settings.rs
-          python3 <<'PY'
-          from pathlib import Path
-          p = Path("src-tauri/src/settings.rs")
-          s = p.read_text()
-          old = """    #[serde(rename = \"directml\")]
-    DirectMl,
-    Rocm,
-}"""
-          new = """    #[serde(rename = \"directml\")]
-    DirectMl,
-    Rocm,
-    /// Intel OpenVINO (CPU/GPU/NPU via OpenVINO EP).
-    OpenVino,
-    /// Intel NPU via OpenVINO (`device_type=NPU`).
-    Npu,
-}"""
-          if "OpenVino" in s and "Npu," in s:
-              print("settings already has OpenVino/Npu")
-          elif old not in s:
-              raise SystemExit("settings pattern not found")
-          else:
-              p.write_text(s.replace(old, new, 1))
-              print("settings patched")
-          PY
+          git config user.name "gkuhns"
+          git config user.email "gkuhns@gmail.com"
 
-      - name: Restore transcription.rs from known-good base and patch mapping
+      - name: Fetch and merge upstream main (Handy 0.9.5)
         run: |
           set -euo pipefail
-          curl -fsSL "https://raw.githubusercontent.com/gkuhns/Handy/b0b05002d2ef1ea40c231740c9059916e60b46f6/src-tauri/src/managers/transcription.rs" \
-            -o src-tauri/src/managers/transcription.rs
-          python3 <<'PY'
-          from pathlib import Path
-          p = Path("src-tauri/src/managers/transcription.rs")
-          t = p.read_text()
-          old = """        OrtAcceleratorSetting::Rocm => accel::OrtAccelerator::Rocm,
-    };"""
-          new = """        OrtAcceleratorSetting::Rocm => accel::OrtAccelerator::Rocm,
-        OrtAcceleratorSetting::OpenVino => accel::OrtAccelerator::OpenVino,
-        OrtAcceleratorSetting::Npu => accel::OrtAccelerator::Npu,
-    };"""
-          if "OrtAccelerator::Npu" in t:
-              print("transcription already patched")
-          elif old not in t:
-              raise SystemExit("transcription pattern not found")
-          else:
-              p.write_text(t.replace(old, new, 1))
-              print("transcription patched")
-          PY
+          git remote add upstream https://github.com/cjpais/Handy.git || true
+          git fetch upstream main
+          echo "upstream HEAD: $(git rev-parse upstream/main)"
+          echo "commits ahead: $(git rev-list --count HEAD..upstream/main)"
+          # Merge; conflict resolution is scripted below
+          git merge upstream/main --no-edit -m "merge(upstream): full Handy 0.9.5 into feature/intel-npu" || true
 
-      - name: Restore full installer.nsi + ensure relative path include
+      - name: Resolve Cargo.toml (0.9.5 + ort-openvino fork)
         run: |
           set -euo pipefail
-          curl -fsSL "https://raw.githubusercontent.com/gkuhns/Handy/b3596dc90c36c1f402376c5a377b75b5e212400d/src-tauri/nsis/installer.nsi" \
-            -o src-tauri/nsis/installer.nsi
-          python3 <<'PY'
-          from pathlib import Path
-          p = Path("src-tauri/nsis/installer.nsi")
-          s = p.read_text()
-          if r'..\\..\\..\\..\\nsis\\intel-npu-drivers.nsh' not in s and '..\\..\\..\\..\\nsis\\intel-npu-drivers.nsh' not in s:
-              print('installer check')
-          lines = len(p.read_text().splitlines())
-          print(f"installer.nsi lines: {lines}")
-          if lines < 1000:
-              raise SystemExit(f"installer.nsi still too short ({lines} lines)")
-          PY
-
-      - name: Ensure intel-npu-drivers.nsh exists
-        run: |
-          set -euo pipefail
-          if [ ! -f src-tauri/nsis/intel-npu-drivers.nsh ]; then
-            echo "intel-npu-drivers.nsh missing - cannot restore"
-            exit 1
+          if grep -q '<<<<<<' src-tauri/Cargo.toml 2>/dev/null; then
+            git checkout --theirs src-tauri/Cargo.toml
           fi
-          echo "intel-npu-drivers.nsh present ($(wc -l < src-tauri/nsis/intel-npu-drivers.nsh) lines)"
+          python3 <<'PY'
+          import re
+          from pathlib import Path
+          p = Path("src-tauri/Cargo.toml")
+          text = p.read_text()
+          text = re.sub(r'^version = ".*"', 'version = "0.9.5"', text, count=1, flags=re.M)
+          text = re.sub(
+              r'transcribe-rs = \{[^}]+\}',
+              'transcribe-rs = { git = "https://github.com/gkuhns/transcribe-rs", default-features = false, features = ["onnx", "ort-openvino"] }',
+              text,
+              count=1,
+          )
+          if "Fork with Intel OpenVINO" not in text:
+              text = text.replace(
+                  'transcribe-rs = { git = "https://github.com/gkuhns/transcribe-rs"',
+                  '# Fork with Intel OpenVINO / NPU support (gkuhns). Not pushed upstream.\n# Aligned to Handy 0.9.5.\ntranscribe-rs = { git = "https://github.com/gkuhns/transcribe-rs"',
+              )
+          p.write_text(text)
+          print("Cargo.toml resolved")
+          for line in text.splitlines():
+              if any(x in line for x in ["version =", "transcribe-rs", "transcribe-cpp", "whatlang", "handy-keys"]):
+                  print(" ", line)
+          PY
 
-      - name: Restore build.yml (fix PLACEHOLDER) + disable createUpdaterArtifacts on unsigned builds
+      - name: Resolve build.yml (upstream + unsigned NPU patch)
         run: |
           set -euo pipefail
-          curl -fsSL "https://raw.githubusercontent.com/gkuhns/Handy/fb58aa218a597d413eb361bcfc28f7a1380205da/.github/workflows/build.yml" \
-            -o .github/workflows/build.yml
+          if grep -q '<<<<<<' .github/workflows/build.yml 2>/dev/null; then
+            git checkout --theirs .github/workflows/build.yml
+          fi
           python3 <<'PY'
           from pathlib import Path
           p = Path(".github/workflows/build.yml")
-          text = p.read_text()
-          old = "jq 'del(.bundle.windows.signCommand)' src-tauri/tauri.conf.json > tmp.json"
-          new = "jq 'del(.bundle.windows.signCommand) | .bundle.createUpdaterArtifacts = false' src-tauri/tauri.conf.json > tmp.json"
-          if old not in text:
-              raise SystemExit("expected jq line not found")
-          text = text.replace(old, new, 1)
-          old_echo = 'echo "Cleared bundle.windows.signCommand (unsigned build)"'
-          new_echo = 'echo "Cleared bundle.windows.signCommand and createUpdaterArtifacts (unsigned build)"'
-          if old_echo not in text:
-              raise SystemExit("expected echo line not found")
-          text = text.replace(old_echo, new_echo, 1)
-          text = text.replace(
-              "Disable Windows custom signCommand when not signing",
-              "Disable Windows custom signCommand and updater artifacts when not signing",
-              1,
-          )
-          p.write_text(text)
-          print("build.yml restored and patched", len(text), "bytes")
+          lines = p.read_text().splitlines(keepends=True)
+          text = "".join(lines)
+          if "Disable Windows signCommand" in text:
+              print("Unsigned patch already present")
+          else:
+              insert_at = None
+              for i, line in enumerate(lines):
+                  if "Install SPIRV-Headers" in line or "SPIRV-Headers for transcribe-cpp" in line:
+                      for j in range(i+1, len(lines)):
+                          if lines[j].startswith("      - name:") or (lines[j].startswith("      #") and "transcribe-cpp ships" in lines[j]):
+                              insert_at = j
+                              break
+                      break
+              if insert_at is None:
+                  raise SystemExit("Could not find insert point for unsigned patch")
+              patch = """      - name: Disable Windows signCommand and updater artifacts when not signing
+        if: contains(inputs.platform, 'windows') && !inputs.sign-binaries
+        shell: bash
+        run: |
+          jq 'del(.bundle.windows.signCommand) | .bundle.createUpdaterArtifacts = false' src-tauri/tauri.conf.json > tmp.json
+          mv tmp.json src-tauri/tauri.conf.json
+          echo "Cleared signCommand and createUpdaterArtifacts (unsigned build)"
+
+"""
+              lines.insert(insert_at, patch)
+              p.write_text("".join(lines))
+              print(f"Inserted unsigned patch at line {insert_at}")
           PY
 
-      - name: Commit and push
+      - name: Verify no conflict markers + NPU still present
         run: |
           set -euo pipefail
-          git config user.name "gkuhns"
-          git config user.email "gkuhns@gmail.com"
-          git add \
-            src-tauri/src/settings.rs \
-            src-tauri/src/managers/transcription.rs \
-            src-tauri/nsis/installer.nsi \
-            src-tauri/nsis/intel-npu-drivers.nsh \
-            .github/workflows/build.yml \
-            || true
+          if git grep -n '<<<<<<<' -- . 2>/dev/null; then
+            echo "ERROR: conflict markers remain"
+            exit 1
+          fi
+          grep -n 'OpenVino\|Npu' src-tauri/src/settings.rs | head -5
+          grep -n 'OrtAccelerator::Npu\|OpenVino' src-tauri/src/managers/transcription.rs | head -5
+          grep -E 'version = |transcribe-rs|transcribe-cpp' src-tauri/Cargo.toml | head -10
+          test -f src-tauri/src/audio_toolkit/lang_id.rs && echo "lang_id.rs present" || echo "WARN: lang_id.rs missing"
+          test -f src-tauri/src/memory.rs && echo "memory.rs present" || echo "WARN: memory.rs missing"
+
+      - name: Commit and push full merge
+        run: |
+          set -euo pipefail
+          git add -A
           if git diff --cached --quiet; then
             echo "No changes to commit"
+            git log --oneline -5
             exit 0
           fi
-          git commit -m "ci(intel-npu): restore build.yml + disable createUpdaterArtifacts on unsigned builds"
+          git commit -m "merge(upstream): full Handy 0.9.5 into feature/intel-npu
+
+- Cargo.toml: 0.9.5 + gkuhns/transcribe-rs ort-openvino
+- build.yml: upstream + unsigned NPU installer patch
+- NPU OpenVino/Npu settings preserved through merge"
           git push origin HEAD:feature/intel-npu
+          echo "Pushed $(git rev-parse HEAD)"
+          git log --oneline -5
