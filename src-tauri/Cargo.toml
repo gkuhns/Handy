@@ -77,7 +77,7 @@ sha2 = "0.10"
 # transcribe-rs is now ONNX-only (Parakeet, Moonshine, SenseVoice, GigaAM,
 # Canary, Cohere). Per-platform backend features are added in the target tables.
 # Fork with Intel OpenVINO / NPU support (gkuhns). Not pushed upstream to cjpais.
-# Base is aligned to transcribe-rs 0.3.x API used by Handy 0.9.5.
+# Base aligned to transcribe-rs 0.3.x API used by Handy 0.9.5.
 transcribe-rs = { git = "https://github.com/gkuhns/transcribe-rs", default-features = false, features = ["onnx", "ort-openvino"] }
 transcribe-cpp = { version = "0.2.0", default-features = false }
 handy-keys = "0.3.4"
