@@ -76,7 +76,9 @@ sha2 = "0.10"
 # Whisper-family models run through transcribe-cpp (GGUF/ggml, native backends);
 # transcribe-rs is now ONNX-only (Parakeet, Moonshine, SenseVoice, GigaAM,
 # Canary, Cohere). Per-platform backend features are added in the target tables.
-transcribe-rs = { version = "0.3.8", features = ["onnx"] }
+# Fork with Intel OpenVINO / NPU support (gkuhns).
+# Aligned to Handy 0.9.5.
+transcribe-rs = { git = "https://github.com/gkuhns/transcribe-rs", default-features = false, features = ["onnx", "ort-openvino"] }
 transcribe-cpp = { version = "0.2.0", default-features = false }
 handy-keys = "0.3.4"
 ferrous-opencc = "0.2.3"

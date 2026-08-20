@@ -128,6 +128,14 @@ jobs:
           Add-Content $env:GITHUB_ENV "CMAKE_PREFIX_PATH=$combined"
           Write-Host "CMAKE_PREFIX_PATH=$combined"
 
+      - name: Disable Windows signCommand and updater artifacts when not signing
+        if: contains(inputs.platform, "windows") && !inputs.sign-binaries
+        shell: bash
+        run: |
+          jq "del(.bundle.windows.signCommand) | .bundle.createUpdaterArtifacts = false" src-tauri/tauri.conf.json > tmp.json
+          mv tmp.json src-tauri/tauri.conf.json
+          echo Cleared signCommand
+
       # transcribe-cpp ships as a shared libtranscribe + loadable ggml backend
       # modules on Linux (the `dynamic-backends` posture). They are produced by
       # transcribe-cpp-sys's CMake install during the cargo build, but nothing
