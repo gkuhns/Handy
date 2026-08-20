@@ -1,0 +1,48 @@
+name: Apply 0.9.5 merge patches
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/intel-npu
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Apply patches
+        run: |
+          set -euo pipefail
+          for p in docs/intel-npu/patches/src-tauri.diff docs/intel-npu/patches/src.diff docs/intel-npu/patches/rest.diff; do
+            if [ -f "$p" ]; then
+              echo "Applying $p"
+              git apply --whitespace=nowarn "$p" || git apply --3way --whitespace=nowarn "$p"
+            fi
+          done
+          if git grep -n '<<<<<<<' -- . 2>/dev/null; then
+            echo "ERROR: conflict markers remain"
+            exit 1
+          fi
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "merge(upstream): apply full Handy 0.9.5 patches onto feature/intel-npu"
+          else
+            echo "Nothing to commit"
+          fi
+          grep -E 'version = |transcribe-rs|OpenVino|Npu' src-tauri/Cargo.toml src-tauri/src/settings.rs | head -15 || true
+
+      - name: Push
+        run: |
+          git push origin HEAD:feature/intel-npu
+          git log --oneline -5
