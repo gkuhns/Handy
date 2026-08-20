@@ -1,0 +1,30 @@
+name: Fix build.yml quotes
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/intel-npu
+          token: ${{ secrets.PUSH_TOKEN }}
+
+      - name: Fix quotes and push
+        run: |
+          set -euo pipefail
+          git config user.name "gkuhns"
+          git config user.email "gkuhns@users.noreply.github.com"
+          sed -i 's/contains(inputs.platform, "windows")/contains(inputs.platform, '\''windows'\'')/' .github/workflows/build.yml
+          sed -i 's/jq "del(/jq '\''del(/' .github/workflows/build.yml
+          sed -i 's/false" src/false'\'' src/' .github/workflows/build.yml
+          grep -n "Disable Windows" -A6 .github/workflows/build.yml
+          git add .github/workflows/build.yml
+          git commit -m "fix(intel-npu): correct expression quotes in unsigned NPU build patch" || echo "no change"
+          git push origin HEAD:feature/intel-npu
+          git log --oneline -3
