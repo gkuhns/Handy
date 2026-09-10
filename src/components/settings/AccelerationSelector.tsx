@@ -15,6 +15,9 @@ const ORT_LABELS: Record<OrtAcceleratorSetting, string> = {
   cuda: "CUDA",
   directml: "DirectML",
   rocm: "ROCm",
+  openvino: "OpenVINO",
+  open_vino: "OpenVINO",
+  npu: "NPU",
 };
 
 interface AccelerationSelectorProps {
@@ -62,7 +65,6 @@ export const AccelerationSelector: FC<AccelerationSelectorProps> = ({
 
   useEffect(() => {
     commands.getAvailableAccelerators().then((available) => {
-      // Build combined transcribe.cpp options: Auto, [GPU devices...], CPU
       const opts: DropdownOption[] = [];
       if (available.transcribe.includes("auto")) {
         opts.push({
@@ -89,14 +91,13 @@ export const AccelerationSelector: FC<AccelerationSelectorProps> = ({
       }
       setTranscribeOptions(opts);
 
-      // ORT options (unchanged)
       const ortVals = available.ort.includes("auto")
         ? available.ort
         : ["auto", ...available.ort];
       setOrtOptions(
         ortVals.map((v) => ({
-          value: v,
-          label: ORT_LABELS[v as OrtAcceleratorSetting] ?? v,
+          value: v === "open_vino" ? "openvino" : v,
+          label: ORT_LABELS[(v === "open_vino" ? "openvino" : v) as OrtAcceleratorSetting] ?? v,
         })),
       );
     });
@@ -113,11 +114,11 @@ export const AccelerationSelector: FC<AccelerationSelectorProps> = ({
   )
     ? currentTranscribe
     : (transcribeOptions[0]?.value ?? null);
-  const currentOrt = getSetting("ort_accelerator") ?? "auto";
+  const rawOrt = getSetting("ort_accelerator") ?? "auto";
+  const currentOrt = rawOrt === "open_vino" ? "openvino" : rawOrt;
 
   const handleTranscribeChange = async (value: string) => {
     const { accelerator, gpuDevice } = decodeTranscribeValue(value);
-    // Save the device first to avoid `gpu + null` being normalized to Auto.
     await updateSetting("transcribe_gpu_device", gpuDevice);
     await updateSetting("transcribe_accelerator", accelerator);
   };
