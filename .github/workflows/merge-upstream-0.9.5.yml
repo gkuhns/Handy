@@ -1,4 +1,4 @@
-name: Merge upstream 0.9.5 into feature/intel-npu
+name: Overlay refresh from upstream Handy
 
 on:
   workflow_dispatch:
@@ -22,16 +22,16 @@ jobs:
           git config user.name "gkuhns"
           git config user.email "gkuhns@users.noreply.github.com"
 
-      - name: Fetch and merge upstream main
+      - name: Fetch and merge upstream main (source of truth)
         run: |
           set -euo pipefail
           git remote add upstream https://github.com/cjpais/Handy.git || true
           git fetch upstream main
           echo "upstream: $(git rev-parse upstream/main)"
           echo "HEAD before: $(git rev-parse HEAD)"
-          git merge upstream/main -X theirs --no-edit -m "merge(upstream): full Handy 0.9.5 into feature/intel-npu" || true
+          git merge upstream/main -X theirs --no-edit -m "merge(upstream): overlay refresh from cjpais/Handy" || true
 
-      - name: Clear remaining unmerged paths
+      - name: Clear remaining unmerged paths with upstream
         run: |
           set -euo pipefail
           if git diff --name-only --diff-filter=U 2>/dev/null | grep -q .; then
@@ -42,7 +42,7 @@ jobs:
             done
           fi
 
-      - name: Re-apply NPU fork in Cargo.toml
+      - name: Overlay Cargo.toml NPU fork only
         run: |
           set -euo pipefail
           python3 -c '
@@ -50,7 +50,6 @@ jobs:
           from pathlib import Path
           p = Path("src-tauri/Cargo.toml")
           text = p.read_text()
-          text = re.sub(r"^version = \".*\"", "version = \"0.9.5\"", text, count=1, flags=re.M)
           text = re.sub(
               r"transcribe-rs = \{[^}]+\}",
               "transcribe-rs = { git = \"https://github.com/gkuhns/transcribe-rs\", default-features = false, features = [\"onnx\", \"ort-openvino\"] }",
@@ -60,20 +59,39 @@ jobs:
           if "Fork with Intel OpenVINO" not in text:
               text = text.replace(
                   "transcribe-rs = { git = \"https://github.com/gkuhns/transcribe-rs\"",
-                  "# Fork with Intel OpenVINO / NPU support (gkuhns).\n# Aligned to Handy 0.9.5.\ntranscribe-rs = { git = \"https://github.com/gkuhns/transcribe-rs\"",
+                  "# Downstream overlay: Intel OpenVINO / NPU (gkuhns). Upstream remains source of truth.\ntranscribe-rs = { git = \"https://github.com/gkuhns/transcribe-rs\"",
               )
           p.write_text(text)
-          print("Cargo.toml NPU OK")
+          print("Cargo.toml overlay OK")
           '
 
-      - name: Re-apply unsigned NPU build patch
+      - name: Overlay OpenVino/Npu settings variants if wiped
+        run: |
+          set -euo pipefail
+          python3 -c '
+          from pathlib import Path
+          p = Path("src-tauri/src/settings.rs")
+          text = p.read_text()
+          if "OpenVino" not in text and "enum OrtAcceleratorSetting" in text:
+              text = text.replace(
+                  "    Rocm,\n}",
+                  "    Rocm,\n    /// Intel OpenVINO (CPU/GPU/NPU via OpenVINO EP).\n    OpenVino,\n    /// Intel NPU via OpenVINO (device_type=NPU).\n    Npu,\n}",
+              )
+              p.write_text(text)
+              print("reinserted OpenVino/Npu variants")
+          else:
+              print("settings variants already present or enum missing")
+          '
+
+      - name: Overlay unsigned Windows installer patch
         run: |
           set -euo pipefail
           python3 -c '
           from pathlib import Path
           p = Path(".github/workflows/build.yml")
           lines = p.read_text().splitlines(keepends=True)
-          if "Disable Windows signCommand" not in "".join(lines):
+          joined = "".join(lines)
+          if "Disable Windows signCommand" not in joined:
               insert_at = None
               for i, line in enumerate(lines):
                   if "SPIRV-Headers" in line and "name:" in line:
@@ -82,13 +100,18 @@ jobs:
                               insert_at = j
                               break
                       break
+              if insert_at is None:
+                  for i, line in enumerate(lines):
+                      if line.startswith("      - name: Build with Tauri"):
+                          insert_at = i
+                          break
               if insert_at is not None:
                   patch = (
                       "      - name: Disable Windows signCommand and updater artifacts when not signing\n"
-                      "        if: contains(inputs.platform, \"windows\") && !inputs.sign-binaries\n"
+                      "        if: contains(inputs.platform, '\''windows'\'') && !inputs.sign-binaries\n"
                       "        shell: bash\n"
                       "        run: |\n"
-                      "          jq \"del(.bundle.windows.signCommand) | .bundle.createUpdaterArtifacts = false\" src-tauri/tauri.conf.json > tmp.json\n"
+                      "          jq '\''del(.bundle.windows.signCommand) | .bundle.createUpdaterArtifacts = false'\'' src-tauri/tauri.conf.json > tmp.json\n"
                       "          mv tmp.json src-tauri/tauri.conf.json\n"
                       "          echo Cleared signCommand\n"
                       "\n"
@@ -102,17 +125,16 @@ jobs:
               print("unsigned patch already present")
           '
 
-      - name: Commit and push
+      - name: Commit and push overlay
         run: |
           set -euo pipefail
-          # Only fail on markers in source, not in docs/patches or workflow text
           if git grep -n "<<<<<<<" -- src-tauri src 2>/dev/null; then
             echo "ERROR: conflict markers in source"
             exit 1
           fi
           git add -A
           if ! git diff --cached --quiet; then
-            git commit -m "merge(upstream): full Handy 0.9.5 into feature/intel-npu"
+            git commit -m "merge(upstream): overlay refresh from cjpais/Handy (downstream fork)"
           else
             echo "Nothing to commit"
           fi
@@ -120,4 +142,4 @@ jobs:
           git push origin HEAD:feature/intel-npu
           echo "Pushed $(git rev-parse HEAD)"
           git log --oneline -8
-          grep -E "version = |transcribe-rs|OpenVino|Npu" src-tauri/Cargo.toml src-tauri/src/settings.rs | head -20 || true
+          grep -E "^version = |transcribe-rs|OpenVino|Npu" src-tauri/Cargo.toml src-tauri/src/settings.rs | head -20 || true
