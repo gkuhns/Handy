@@ -4,12 +4,9 @@ import { SettingContainer } from "../ui/SettingContainer";
 import { Dropdown, type DropdownOption } from "../ui/Dropdown";
 import { useSettings } from "../../hooks/useSettings";
 import { commands } from "@/bindings";
-import type {
-  TranscribeAcceleratorSetting,
-  OrtAcceleratorSetting,
-} from "@/bindings";
+import type { TranscribeAcceleratorSetting } from "@/bindings";
 
-const ORT_LABELS: Record<OrtAcceleratorSetting, string> = {
+const ORT_LABELS: Record<string, string> = {
   auto: "Auto",
   cpu: "CPU",
   cuda: "CUDA",
@@ -20,17 +17,15 @@ const ORT_LABELS: Record<OrtAcceleratorSetting, string> = {
   npu: "NPU",
 };
 
+function normalizeOrtValue(value: string): string {
+  return value === "open_vino" ? "openvino" : value;
+}
+
 interface AccelerationSelectorProps {
   descriptionMode?: "tooltip" | "inline";
   grouped?: boolean;
 }
 
-/**
- * transcribe.cpp dropdown encodes accelerator + device in a single value:
- *   "auto"       → accelerator=auto, gpu_device=null
- *   "cpu"        → accelerator=cpu,  gpu_device=null
- *   "gpu:<id>"   → accelerator=gpu, stable opaque device identity
- */
 function encodeTranscribeValue(
   accelerator: TranscribeAcceleratorSetting,
   gpuDevice: string | null,
@@ -95,10 +90,13 @@ export const AccelerationSelector: FC<AccelerationSelectorProps> = ({
         ? available.ort
         : ["auto", ...available.ort];
       setOrtOptions(
-        ortVals.map((v) => ({
-          value: v === "open_vino" ? "openvino" : v,
-          label: ORT_LABELS[(v === "open_vino" ? "openvino" : v) as OrtAcceleratorSetting] ?? v,
-        })),
+        ortVals.map((v) => {
+          const normalized = normalizeOrtValue(v);
+          return {
+            value: normalized,
+            label: ORT_LABELS[normalized] ?? v,
+          };
+        }),
       );
     });
   }, [t]);
@@ -114,8 +112,9 @@ export const AccelerationSelector: FC<AccelerationSelectorProps> = ({
   )
     ? currentTranscribe
     : (transcribeOptions[0]?.value ?? null);
-  const rawOrt = getSetting("ort_accelerator") ?? "auto";
-  const currentOrt = rawOrt === "open_vino" ? "openvino" : rawOrt;
+  const currentOrt = normalizeOrtValue(
+    String(getSetting("ort_accelerator") ?? "auto"),
+  );
 
   const handleTranscribeChange = async (value: string) => {
     const { accelerator, gpuDevice } = decodeTranscribeValue(value);
@@ -153,9 +152,7 @@ export const AccelerationSelector: FC<AccelerationSelectorProps> = ({
           <Dropdown
             options={ortOptions}
             selectedValue={currentOrt}
-            onSelect={(value) =>
-              updateSetting("ort_accelerator", value as OrtAcceleratorSetting)
-            }
+            onSelect={(value) => updateSetting("ort_accelerator", value as never)}
             disabled={isUpdating("ort_accelerator")}
           />
         </SettingContainer>
