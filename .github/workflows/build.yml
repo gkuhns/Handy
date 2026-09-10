@@ -128,20 +128,22 @@ jobs:
           Write-Host "Downloading $url"
           Invoke-WebRequest -Uri $url -OutFile ov-ep.nupkg
           Expand-Archive -Path ov-ep.nupkg -DestinationPath ov-ep-nupkg -Force
-          $native = Get-ChildItem -Path ov-ep-nupkg -Recurse -Filter "onnxruntime_providers_openvino.dll" | Select-Object -First 1
-          if (-not $native) {
-            Get-ChildItem -Path ov-ep-nupkg -Recurse -File | Select-Object -ExpandProperty FullName | Write-Host
-            throw "onnxruntime_providers_openvino.dll not found in $pkg $ver"
+          $srcDir = "ov-ep-nupkg\runtimes\win-x64\native"
+          if (-not (Test-Path $srcDir)) {
+            throw "Missing $srcDir"
           }
-          $srcDir = $native.Directory.FullName
-          $dest = "src-tauri/openvino-ep"
+          $dest = "src-tauri\openvino-ep"
           New-Item -ItemType Directory -Force -Path $dest | Out-Null
-          Copy-Item -Path (Join-Path $srcDir "*.dll") -Destination $dest -Force
-          Write-Host "Staged OpenVINO DLLs into $dest"
-          Get-ChildItem $dest -Filter *.dll | ForEach-Object { Write-Host "  $($_.Name) $($_.Length)" }
-          if (-not (Test-Path (Join-Path $dest "onnxruntime_providers_openvino.dll"))) {
-            throw "Failed to stage onnxruntime_providers_openvino.dll"
+          Copy-Item -Path (Join-Path $srcDir "*") -Destination $dest -Force
+          $plugin = Get-ChildItem $dest -Filter "*openvino*plugin.dll" | Select-Object -First 1
+          if (-not $plugin) {
+            Get-ChildItem $dest | Select-Object -ExpandProperty Name | Write-Host
+            throw "No OpenVINO plugin DLL in $dest"
           }
+          Copy-Item $plugin.FullName (Join-Path $dest "onnxruntime_providers_openvino.dll") -Force
+          Copy-Item $plugin.FullName (Join-Path $dest "onnxruntime_providers_openvino_plugin.dll") -Force
+          Write-Host "Staged OpenVINO files into $dest"
+          Get-ChildItem $dest | ForEach-Object { Write-Host "  $($_.Name) $($_.Length)" }
 
       - name: Install SPIRV-Headers for transcribe-cpp Vulkan build (Windows x64)
         if: contains(inputs.platform, 'windows') && !contains(inputs.target, 'aarch64')
