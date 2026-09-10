@@ -134,73 +134,14 @@ jobs:
             throw "onnxruntime_providers_openvino.dll not found in $pkg $ver"
           }
           $srcDir = $native.Directory.FullName
-          Write-Host "OpenVINO EP native dir: $srcDir"
-          Get-ChildItem $srcDir -Filter *.dll | ForEach-Object { Write-Host "  $($_.Name)" }
-          Add-Content -Path $env:GITHUB_ENV -Value "HANDY_OPENVINO_LIB_DIR=$srcDir"
-          Add-Content -Path $env:GITHUB_ENV -Value "HANDY_OPENVINO_EP_LIBRARY=$($native.FullName)"
-
-      - name: Stage OpenVINO DLLs from build.rs (Windows x64)
-        if: contains(inputs.platform, 'windows') && !contains(inputs.target, 'aarch64')
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - << 'PY'
-          from pathlib import Path
-          p = Path("src-tauri/build.rs")
-          t = p.read_text()
-          needle = "    stage_vc_runtime_dlls();\n\n    tauri_build::build()"
-          insert = '''    stage_vc_runtime_dlls();
-    stage_openvino_ep_dlls();
-
-    tauri_build::build()'''
-          if "fn stage_openvino_ep_dlls" not in t:
-              if needle not in t:
-                  raise SystemExit("build.rs insert point not found")
-              t = t.replace(needle, insert, 1)
-              t += r'''
-
-/// Copy Intel OpenVINO EP + runtime DLLs into transcribe-libs/ so they sit
-/// next to Handy.exe. Driven by HANDY_OPENVINO_LIB_DIR (CI extracts the
-/// Intel.ML.OnnxRuntime.EP.OpenVINO nupkg).
-fn stage_openvino_ep_dlls() {
-    use std::path::PathBuf;
-    println!("cargo:rerun-if-env-changed=HANDY_OPENVINO_LIB_DIR");
-    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
-        return;
-    }
-    let Some(dir) = std::env::var_os("HANDY_OPENVINO_LIB_DIR") else {
-        println!("cargo:warning=HANDY_OPENVINO_LIB_DIR unset; OpenVINO EP will not be bundled");
-        return;
-    };
-    let src_dir = PathBuf::from(dir);
-    let dest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("transcribe-libs");
-    std::fs::create_dir_all(&dest).expect("create transcribe-libs staging dir");
-    let mut copied = 0usize;
-    let mut has_ep = false;
-    for entry in std::fs::read_dir(&src_dir).unwrap_or_else(|e| panic!("read {}: {e}", src_dir.display())).flatten() {
-        let src = entry.path();
-        let name = src.file_name().and_then(|s| s.to_str()).unwrap_or("").to_string();
-        let lower = name.to_lowercase();
-        if !lower.ends_with(".dll") {
-            continue;
-        }
-        std::fs::copy(&src, dest.join(&name)).unwrap_or_else(|e| panic!("copy {}: {e}", src.display()));
-        copied += 1;
-        if lower == "onnxruntime_providers_openvino.dll" {
-            has_ep = true;
-        }
-    }
-    if !has_ep {
-        panic!("HANDY_OPENVINO_LIB_DIR has no onnxruntime_providers_openvino.dll");
-    }
-    println!("cargo:warning=Staged {copied} OpenVINO EP/runtime DLL(s) for Windows bundling");
-}
-'''
-              p.write_text(t)
-              print("build.rs patched for OpenVINO staging")
-          else:
-              print("build.rs already has OpenVINO staging")
-          PY
+          $dest = "src-tauri/openvino-ep"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          Copy-Item -Path (Join-Path $srcDir "*.dll") -Destination $dest -Force
+          Write-Host "Staged OpenVINO DLLs into $dest"
+          Get-ChildItem $dest -Filter *.dll | ForEach-Object { Write-Host "  $($_.Name) $($_.Length)" }
+          if (-not (Test-Path (Join-Path $dest "onnxruntime_providers_openvino.dll"))) {
+            throw "Failed to stage onnxruntime_providers_openvino.dll"
+          }
 
       - name: Install SPIRV-Headers for transcribe-cpp Vulkan build (Windows x64)
         if: contains(inputs.platform, 'windows') && !contains(inputs.target, 'aarch64')
