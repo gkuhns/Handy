@@ -22,124 +22,52 @@ jobs:
           git config user.name "gkuhns"
           git config user.email "gkuhns@users.noreply.github.com"
 
-      - name: Fetch and merge upstream main (source of truth)
+      - name: Patch OpenVINO serde aliases and TS union
         run: |
           set -euo pipefail
-          git remote add upstream https://github.com/cjpais/Handy.git || true
-          git fetch upstream main
-          echo "upstream: $(git rev-parse upstream/main)"
-          echo "HEAD before: $(git rev-parse HEAD)"
-          git merge upstream/main -X theirs --no-edit -m "merge(upstream): overlay refresh from cjpais/Handy" || true
-
-      - name: Clear remaining unmerged paths with upstream
-        run: |
-          set -euo pipefail
-          if git diff --name-only --diff-filter=U 2>/dev/null | grep -q .; then
-            git diff --name-only --diff-filter=U | while read -r f; do
-              echo "taking upstream for $f"
-              git checkout --theirs -- "$f"
-              git add -- "$f"
-            done
-          fi
-
-      - name: Overlay Cargo.toml NPU fork only
-        run: |
-          set -euo pipefail
-          python3 -c '
-          import re
-          from pathlib import Path
-          p = Path("src-tauri/Cargo.toml")
-          text = p.read_text()
-          text = re.sub(
-              r"transcribe-rs = \{[^}]+\}",
-              "transcribe-rs = { git = \"https://github.com/gkuhns/transcribe-rs\", default-features = false, features = [\"onnx\", \"ort-openvino\"] }",
-              text,
-              count=1,
-          )
-          if "Fork with Intel OpenVINO" not in text:
-              text = text.replace(
-                  "transcribe-rs = { git = \"https://github.com/gkuhns/transcribe-rs\"",
-                  "# Downstream overlay: Intel OpenVINO / NPU (gkuhns). Upstream remains source of truth.\ntranscribe-rs = { git = \"https://github.com/gkuhns/transcribe-rs\"",
-              )
-          p.write_text(text)
-          print("Cargo.toml overlay OK")
-          '
-
-      - name: Overlay OpenVino/Npu settings variants if wiped
-        run: |
-          set -euo pipefail
-          python3 -c '
+          python3 << 'PY'
           from pathlib import Path
           p = Path("src-tauri/src/settings.rs")
-          text = p.read_text()
-          if "OpenVino" not in text and "enum OrtAcceleratorSetting" in text:
-              text = text.replace(
-                  "    Rocm,\n}",
-                  "    Rocm,\n    /// Intel OpenVINO (CPU/GPU/NPU via OpenVINO EP).\n    OpenVino,\n    /// Intel NPU via OpenVINO (device_type=NPU).\n    Npu,\n}",
-              )
-              p.write_text(text)
-              print("reinserted OpenVino/Npu variants")
+          t = p.read_text()
+          old = """    Rocm,
+    /// Intel OpenVINO (CPU/GPU/NPU via OpenVINO EP).
+    OpenVino,
+    /// Intel NPU via OpenVINO (`device_type=NPU`).
+    Npu,
+}"""
+          new = """    Rocm,
+    /// Intel OpenVINO AUTO device (CPU/GPU/NPU via OpenVINO EP).
+    #[serde(rename = "openvino", alias = "open_vino")]
+    OpenVino,
+    /// Intel NPU via OpenVINO (`device_type=NPU`).
+    #[serde(rename = "npu", alias = "openvino_npu")]
+    Npu,
+}"""
+          if old in t:
+              p.write_text(t.replace(old, new, 1))
+              print("settings.rs patched")
+          elif 'rename = "openvino"' in t:
+              print("settings.rs already patched")
           else:
-              print("settings variants already present or enum missing")
-          '
+              raise SystemExit("settings.rs pattern not found")
 
-      - name: Overlay unsigned Windows installer patch
-        run: |
-          set -euo pipefail
-          python3 -c '
-          from pathlib import Path
-          p = Path(".github/workflows/build.yml")
-          lines = p.read_text().splitlines(keepends=True)
-          joined = "".join(lines)
-          if "Disable Windows signCommand" not in joined:
-              insert_at = None
-              for i, line in enumerate(lines):
-                  if "SPIRV-Headers" in line and "name:" in line:
-                      for j in range(i+1, len(lines)):
-                          if lines[j].startswith("      - name:") or lines[j].startswith("      #"):
-                              insert_at = j
-                              break
-                      break
-              if insert_at is None:
-                  for i, line in enumerate(lines):
-                      if line.startswith("      - name: Build with Tauri"):
-                          insert_at = i
-                          break
-              if insert_at is not None:
-                  patch = (
-                      "      - name: Disable Windows signCommand and updater artifacts when not signing\n"
-                      "        if: contains(inputs.platform, '\''windows'\'') && !inputs.sign-binaries\n"
-                      "        shell: bash\n"
-                      "        run: |\n"
-                      "          jq '\''del(.bundle.windows.signCommand) | .bundle.createUpdaterArtifacts = false'\'' src-tauri/tauri.conf.json > tmp.json\n"
-                      "          mv tmp.json src-tauri/tauri.conf.json\n"
-                      "          echo Cleared signCommand\n"
-                      "\n"
-                  )
-                  lines.insert(insert_at, patch)
-                  p.write_text("".join(lines))
-                  print("inserted unsigned patch")
-              else:
-                  print("WARN: no insert point")
+          p = Path("src/bindings.ts")
+          t = p.read_text()
+          old = 'export type OrtAcceleratorSetting = "auto" | "cpu" | "cuda" | "directml" | "rocm"'
+          new = 'export type OrtAcceleratorSetting = "auto" | "cpu" | "cuda" | "directml" | "rocm" | "openvino" | "open_vino" | "npu"'
+          if old in t:
+              p.write_text(t.replace(old, new, 1))
+              print("bindings.ts patched")
+          elif '"openvino"' in t and 'OrtAcceleratorSetting' in t:
+              print("bindings.ts already patched")
           else:
-              print("unsigned patch already present")
-          '
-
-      - name: Commit and push overlay
-        run: |
-          set -euo pipefail
-          if git grep -n "<<<<<<<" -- src-tauri src 2>/dev/null; then
-            echo "ERROR: conflict markers in source"
-            exit 1
-          fi
-          git add -A
-          if ! git diff --cached --quiet; then
-            git commit -m "merge(upstream): overlay refresh from cjpais/Handy (downstream fork)"
-          else
+              raise SystemExit("bindings.ts pattern not found")
+          PY
+          git add src-tauri/src/settings.rs src/bindings.ts
+          if git diff --cached --quiet; then
             echo "Nothing to commit"
+          else
+            git commit -m "fix(intel-npu): accept openvino/npu setting strings from UI"
+            git push origin HEAD:feature/intel-npu
           fi
-          echo "HEAD: $(git rev-parse HEAD)"
-          git push origin HEAD:feature/intel-npu
-          echo "Pushed $(git rev-parse HEAD)"
-          git log --oneline -8
-          grep -E "^version = |transcribe-rs|OpenVino|Npu" src-tauri/Cargo.toml src-tauri/src/settings.rs | head -20 || true
+          git log --oneline -4
