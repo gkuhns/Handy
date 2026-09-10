@@ -85,6 +85,21 @@ jobs:
       - name: install frontend dependencies
         run: bun install
 
+      - name: Extend OrtAcceleratorSetting TypeScript union
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $path = "src/bindings.ts"
+          $t = Get-Content $path -Raw
+          $old = 'export type OrtAcceleratorSetting = "auto" | "cpu" | "cuda" | "directml" | "rocm"'
+          $new = 'export type OrtAcceleratorSetting = "auto" | "cpu" | "cuda" | "directml" | "rocm" | "openvino" | "open_vino" | "npu"'
+          if ($t.Contains($old)) {
+            Set-Content -Path $path -Value ($t.Replace($old, $new)) -NoNewline
+            Write-Host "patched bindings.ts OrtAcceleratorSetting"
+          } else {
+            Write-Host "bindings.ts already extended or unexpected union"
+          }
+
       - name: Locate VC++ runtime redist for app-local bundling (Windows)
         if: contains(inputs.platform, 'windows')
         shell: pwsh
