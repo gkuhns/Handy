@@ -129,19 +129,13 @@ jobs:
           Invoke-WebRequest -Uri $url -OutFile ov-ep.nupkg
           Expand-Archive -Path ov-ep.nupkg -DestinationPath ov-ep-nupkg -Force
           $srcDir = "ov-ep-nupkg\runtimes\win-x64\native"
-          if (-not (Test-Path $srcDir)) {
-            throw "Missing $srcDir"
-          }
+          if (-not (Test-Path $srcDir)) { throw "Missing $srcDir" }
+          $pluginSrc = Join-Path $srcDir "onnxruntime_providers_openvino_plugin.dll"
+          if (-not (Test-Path $pluginSrc)) { throw "Missing $pluginSrc" }
           $dest = "src-tauri\openvino-ep"
           New-Item -ItemType Directory -Force -Path $dest | Out-Null
           Copy-Item -Path (Join-Path $srcDir "*") -Destination $dest -Force
-          $plugin = Get-ChildItem $dest -Filter "*openvino*plugin.dll" | Select-Object -First 1
-          if (-not $plugin) {
-            Get-ChildItem $dest | Select-Object -ExpandProperty Name | Write-Host
-            throw "No OpenVINO plugin DLL in $dest"
-          }
-          Copy-Item $plugin.FullName (Join-Path $dest "onnxruntime_providers_openvino.dll") -Force
-          Copy-Item $plugin.FullName (Join-Path $dest "onnxruntime_providers_openvino_plugin.dll") -Force
+          Copy-Item $pluginSrc (Join-Path $dest "onnxruntime_providers_openvino.dll") -Force
           Write-Host "Staged OpenVINO files into $dest"
           Get-ChildItem $dest | ForEach-Object { Write-Host "  $($_.Name) $($_.Length)" }
 
