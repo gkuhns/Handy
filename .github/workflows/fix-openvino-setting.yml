@@ -1,0 +1,86 @@
+name: Fix OpenVINO setting stickiness
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/intel-npu
+          token: ${{ secrets.PUSH_TOKEN }}
+
+      - name: Patch serde aliases, bindings, and labels
+        run: |
+          set -euo pipefail
+          git config user.name "gkuhns"
+          git config user.email "gkuhns@users.noreply.github.com"
+
+          python3 << 'PY'
+          from pathlib import Path
+
+          p = Path("src-tauri/src/settings.rs")
+          t = p.read_text()
+          old = '''    Rocm,
+    /// Intel OpenVINO (CPU/GPU/NPU via OpenVINO EP).
+    OpenVino,
+    /// Intel NPU via OpenVINO (`device_type=NPU`).
+    Npu,
+}'''
+          new = '''    Rocm,
+    /// Intel OpenVINO AUTO device (CPU/GPU/NPU via OpenVINO EP).
+    /// Serialized as "openvino" to match transcribe-rs Display / UI options.
+    #[serde(rename = "openvino", alias = "open_vino")]
+    OpenVino,
+    /// Intel NPU via OpenVINO (`device_type=NPU`).
+    #[serde(rename = "npu", alias = "openvino_npu")]
+    Npu,
+}'''
+          if old not in t:
+              raise SystemExit('settings.rs pattern not found')
+          p.write_text(t.replace(old, new, 1))
+          print('settings.rs patched')
+
+          p = Path("src/bindings.ts")
+          t = p.read_text()
+          old = 'export type OrtAcceleratorSetting = "auto" | "cpu" | "cuda" | "directml" | "rocm"'
+          new = 'export type OrtAcceleratorSetting = "auto" | "cpu" | "cuda" | "directml" | "rocm" | "openvino" | "open_vino" | "npu"'
+          if old not in t:
+              raise SystemExit('bindings.ts pattern not found')
+          p.write_text(t.replace(old, new, 1))
+          print('bindings.ts patched')
+
+          p = Path("src/components/settings/AccelerationSelector.tsx")
+          t = p.read_text()
+          old = '''const ORT_LABELS: Record<OrtAcceleratorSetting, string> = {
+  auto: "Auto",
+  cpu: "CPU",
+  cuda: "CUDA",
+  directml: "DirectML",
+  rocm: "ROCm",
+};'''
+          new = '''const ORT_LABELS: Record<OrtAcceleratorSetting, string> = {
+  auto: "Auto",
+  cpu: "CPU",
+  cuda: "CUDA",
+  directml: "DirectML",
+  rocm: "ROCm",
+  openvino: "OpenVINO",
+  open_vino: "OpenVINO",
+  npu: "NPU",
+};'''
+          if old not in t:
+              raise SystemExit('AccelerationSelector.tsx pattern not found')
+          p.write_text(t.replace(old, new, 1))
+          print('AccelerationSelector.tsx patched')
+          PY
+
+          git add src-tauri/src/settings.rs src/bindings.ts src/components/settings/AccelerationSelector.tsx
+          git commit -m "fix(intel-npu): persist OpenVINO vs NPU (openvino alias, UI labels)"
+          git push origin HEAD:feature/intel-npu
+          git log --oneline -3
