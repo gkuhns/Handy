@@ -4,6 +4,7 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import {
   AudioLines,
   ChevronDown,
+  Cpu,
   Globe,
   Languages,
   RefreshCw,
@@ -19,16 +20,22 @@ import {
 } from "@/lib/constants/languages.ts";
 import type { ModelInfo } from "@/bindings";
 
-// check if model supports a language based on its supported_languages list
 const modelSupportsLanguage = (model: ModelInfo, langCode: string): boolean => {
   return supportsLanguageCode(model.supported_languages, langCode);
 };
 
-// Legacy models are the blob (Url-sourced) .bin/ONNX downloads, superseded by
-// the catalog GGUFs. They stay runnable when already on disk, but we no longer
-// advertise the download.
-const isLegacyModel = (model: ModelInfo): boolean =>
-  typeof model.source === "object" && "Url" in model.source;
+const ONNX_ENGINES = new Set([
+  "Parakeet",
+  "Moonshine",
+  "MoonshineStreaming",
+  "SenseVoice",
+  "GigaAM",
+  "Canary",
+  "Cohere",
+]);
+
+const isOnnxModel = (model: ModelInfo): boolean =>
+  ONNX_ENGINES.has(model.engine_type);
 
 export const ModelsSettings: React.FC = () => {
   const { t } = useTranslation();
@@ -37,6 +44,9 @@ export const ModelsSettings: React.FC = () => {
   const [filterStreaming, setFilterStreaming] = useState(false);
   const [filterTranslation, setFilterTranslation] = useState(false);
   const [languageFilter, setLanguageFilter] = useState("all");
+  const [formatFilter, setFormatFilter] = useState<"all" | "gguf" | "onnx">("all");
+  const [formatDropdownOpen, setFormatDropdownOpen] = useState(false);
+  const formatDropdownRef = useRef<HTMLDivElement>(null);
   const [languageDropdownOpen, setLanguageDropdownOpen] = useState(false);
   const [languageSearch, setLanguageSearch] = useState("");
   const languageDropdownRef = useRef<HTMLDivElement>(null);
@@ -58,7 +68,6 @@ export const ModelsSettings: React.FC = () => {
     rescanLocalModels,
   } = useModelStore();
 
-  // click outside handler for language dropdown
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (
@@ -68,26 +77,29 @@ export const ModelsSettings: React.FC = () => {
         setLanguageDropdownOpen(false);
         setLanguageSearch("");
       }
+      if (
+        formatDropdownRef.current &&
+        !formatDropdownRef.current.contains(event.target as Node)
+      ) {
+        setFormatDropdownOpen(false);
+      }
     };
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // focus search input when dropdown opens
   useEffect(() => {
     if (languageDropdownOpen && languageSearchInputRef.current) {
       languageSearchInputRef.current.focus();
     }
   }, [languageDropdownOpen]);
 
-  // filtered languages for dropdown (exclude "auto")
   const filteredLanguages = useMemo(() => {
     return MODEL_CAPABILITY_LANGUAGES.filter((lang) =>
       lang.label.toLowerCase().includes(languageSearch.toLowerCase()),
     );
   }, [languageSearch]);
 
-  // Get selected language label
   const selectedLanguageLabel = useMemo(() => {
     if (languageFilter === "all") {
       return t("settings.models.filters.allLanguages");
@@ -96,38 +108,22 @@ export const ModelsSettings: React.FC = () => {
   }, [languageFilter, t]);
 
   const getModelStatus = (modelId: string): ModelCardStatus => {
-    if (modelId in extractingModels) {
-      return "extracting";
-    }
-    if (modelId in verifyingModels) {
-      return "verifying";
-    }
-    if (modelId in downloadingModels) {
-      return "downloading";
-    }
-    if (switchingModelId === modelId) {
-      return "switching";
-    }
+    if (modelId in extractingModels) return "extracting";
+    if (modelId in verifyingModels) return "verifying";
+    if (modelId in downloadingModels) return "downloading";
+    if (switchingModelId === modelId) return "switching";
     const model = models.find((m: ModelInfo) => m.id === modelId);
-    // A stale persisted selection must never make a missing model look Active.
-    // Catalog models without files should offer their recovery action instead.
-    if (!model?.is_downloaded) {
-      return "downloadable";
-    }
-    if (modelId === currentModel) {
-      return "active";
-    }
+    if (!model?.is_downloaded) return "downloadable";
+    if (modelId === currentModel) return "active";
     return "available";
   };
 
   const getDownloadProgress = (modelId: string): number | undefined => {
-    const progress = downloadProgress[modelId];
-    return progress?.percentage;
+    return downloadProgress[modelId]?.percentage;
   };
 
   const getDownloadSpeed = (modelId: string): number | undefined => {
-    const stats = downloadStats[modelId];
-    return stats?.speed;
+    return downloadStats[modelId]?.speed;
   };
 
   const handleModelSelect = async (modelId: string) => {
@@ -147,17 +143,12 @@ export const ModelsSettings: React.FC = () => {
     const model = models.find((m: ModelInfo) => m.id === modelId);
     const modelName = model?.name || modelId;
     const isActive = modelId === currentModel;
-
     const confirmed = await ask(
       isActive
         ? t("settings.models.deleteActiveConfirm", { modelName })
         : t("settings.models.deleteConfirm", { modelName }),
-      {
-        title: t("settings.models.deleteTitle"),
-        kind: "warning",
-      },
+      { title: t("settings.models.deleteTitle"), kind: "warning" },
     );
-
     if (confirmed) {
       try {
         await deleteModel(modelId);
@@ -175,31 +166,27 @@ export const ModelsSettings: React.FC = () => {
     }
   };
 
-  // Filter models by search query (name + description), language filter, and toggles
   const filteredModels = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     return models.filter((model: ModelInfo) => {
-      // Hide deprecated legacy (.bin/ONNX) downloads unless already on disk.
-      if (isLegacyModel(model) && !model.is_downloaded) return false;
-      if (languageFilter !== "all") {
-        if (!modelSupportsLanguage(model, languageFilter)) return false;
+      if (formatFilter === "onnx" && !isOnnxModel(model)) return false;
+      if (formatFilter === "gguf" && isOnnxModel(model)) return false;
+      if (languageFilter !== "all" && !modelSupportsLanguage(model, languageFilter)) {
+        return false;
       }
       if (filterStreaming && !model.supports_streaming) return false;
       if (filterTranslation && !model.supports_translation) return false;
-
       if (q) {
         const haystack = `${model.name} ${model.description}`.toLowerCase();
         if (!haystack.includes(q)) return false;
       }
       return true;
     });
-  }, [models, languageFilter, filterStreaming, filterTranslation, searchQuery]);
+  }, [models, languageFilter, formatFilter, filterStreaming, filterTranslation, searchQuery]);
 
-  // Split filtered models into downloaded (including custom) and available sections
   const { downloadedModels, availableModels } = useMemo(() => {
     const downloaded: ModelInfo[] = [];
     const available: ModelInfo[] = [];
-
     for (const model of filteredModels) {
       if (
         model.is_custom ||
@@ -212,19 +199,13 @@ export const ModelsSettings: React.FC = () => {
         available.push(model);
       }
     }
-
-    // Sort: active model first, then non-custom, then custom at the bottom
     downloaded.sort((a, b) => {
       if (a.id === currentModel) return -1;
       if (b.id === currentModel) return 1;
       if (a.is_custom !== b.is_custom) return a.is_custom ? 1 : -1;
       return 0;
     });
-
-    return {
-      downloadedModels: downloaded,
-      availableModels: available,
-    };
+    return { downloadedModels: downloaded, availableModels: available };
   }, [filteredModels, downloadingModels, extractingModels, currentModel]);
 
   if (loading) {
@@ -240,15 +221,10 @@ export const ModelsSettings: React.FC = () => {
   return (
     <div className="max-w-3xl w-full mx-auto space-y-4">
       <div className="mb-4">
-        <h1 className="text-xl font-semibold mb-2">
-          {t("settings.models.title")}
-        </h1>
-        <p className="text-sm text-text/60">
-          {t("settings.models.description")}
-        </p>
+        <h1 className="text-xl font-semibold mb-2">{t("settings.models.title")}</h1>
+        <p className="text-sm text-text/60">{t("settings.models.description")}</p>
       </div>
 
-      {/* Search bar — filter the catalog by name or description */}
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text/40 pointer-events-none" />
         <input
@@ -261,14 +237,12 @@ export const ModelsSettings: React.FC = () => {
       </div>
 
       <div className="space-y-6">
-        {/* Downloaded Models Section — header always visible so filter stays accessible */}
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-medium text-text/60">
               {t("settings.models.yourModels")}
             </h2>
             <div className="flex items-center gap-2">
-              {/* Rescan local sources for models added outside Handy */}
               <button
                 type="button"
                 onClick={() => rescanLocalModels()}
@@ -277,12 +251,8 @@ export const ModelsSettings: React.FC = () => {
                 aria-label={t("settings.models.rescan.tooltip")}
                 className="flex items-center justify-center w-8 h-8 text-sm font-medium rounded-lg bg-mid-gray/10 text-text/60 hover:bg-mid-gray/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <RefreshCw
-                  className={`w-3.5 h-3.5 ${isRescanning ? "animate-spin" : ""}`}
-                />
+                <RefreshCw className={`w-3.5 h-3.5 ${isRescanning ? "animate-spin" : ""}`} />
               </button>
-
-              {/* Vertical divider separating action from filters */}
               <div className="h-4 w-px bg-mid-gray/30 mx-0.5" />
               <button
                 type="button"
@@ -312,7 +282,58 @@ export const ModelsSettings: React.FC = () => {
               >
                 <Languages className="w-3.5 h-3.5" />
               </button>
-              {/* Language filter dropdown */}
+              <div className="relative" ref={formatDropdownRef}>
+                <button
+                  type="button"
+                  onClick={() => setFormatDropdownOpen(!formatDropdownOpen)}
+                  title={t("settings.models.filters.format")}
+                  aria-label={t("settings.models.filters.format")}
+                  className={`flex items-center gap-1.5 h-8 px-3 text-sm font-medium rounded-lg transition-colors ${
+                    formatFilter !== "all"
+                      ? "bg-logo-primary/20 text-logo-primary"
+                      : "bg-mid-gray/10 text-text/60 hover:bg-mid-gray/20"
+                  }`}
+                >
+                  <Cpu className="w-3.5 h-3.5" />
+                  <span className="max-w-[120px] truncate">
+                    {formatFilter === "all"
+                      ? t("settings.models.filters.allFormats")
+                      : formatFilter === "onnx"
+                        ? t("settings.models.filters.onnx")
+                        : t("settings.models.filters.gguf")}
+                  </span>
+                  <ChevronDown
+                    className={`w-3.5 h-3.5 transition-transform ${
+                      formatDropdownOpen ? "rotate-180" : ""
+                    }`}
+                  />
+                </button>
+                {formatDropdownOpen && (
+                  <div className="absolute top-full right-0 mt-1 w-44 bg-background border border-mid-gray/80 rounded-lg shadow-lg z-50 overflow-hidden">
+                    {(["all", "onnx", "gguf"] as const).map((value) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => {
+                          setFormatFilter(value);
+                          setFormatDropdownOpen(false);
+                        }}
+                        className={`w-full px-3 py-1.5 text-sm text-left transition-colors ${
+                          formatFilter === value
+                            ? "bg-logo-primary/20 text-logo-primary font-semibold"
+                            : "hover:bg-mid-gray/10"
+                        }`}
+                      >
+                        {value === "all"
+                          ? t("settings.models.filters.allFormats")
+                          : value === "onnx"
+                            ? t("settings.models.filters.onnx")
+                            : t("settings.models.filters.gguf")}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
               <div className="relative" ref={languageDropdownRef}>
                 <button
                   type="button"
@@ -324,16 +345,13 @@ export const ModelsSettings: React.FC = () => {
                   }`}
                 >
                   <Globe className="w-3.5 h-3.5" />
-                  <span className="max-w-[120px] truncate">
-                    {selectedLanguageLabel}
-                  </span>
+                  <span className="max-w-[120px] truncate">{selectedLanguageLabel}</span>
                   <ChevronDown
                     className={`w-3.5 h-3.5 transition-transform ${
                       languageDropdownOpen ? "rotate-180" : ""
                     }`}
                   />
                 </button>
-
                 {languageDropdownOpen && (
                   <div className="absolute top-full right-0 mt-1 w-56 bg-background border border-mid-gray/80 rounded-lg shadow-lg z-50 overflow-hidden">
                     <div className="p-2 border-b border-mid-gray/40">
@@ -343,10 +361,7 @@ export const ModelsSettings: React.FC = () => {
                         value={languageSearch}
                         onChange={(e) => setLanguageSearch(e.target.value)}
                         onKeyDown={(e) => {
-                          if (
-                            e.key === "Enter" &&
-                            filteredLanguages.length > 0
-                          ) {
+                          if (e.key === "Enter" && filteredLanguages.length > 0) {
                             setLanguageFilter(filteredLanguages[0].value);
                             setLanguageDropdownOpen(false);
                             setLanguageSearch("");
@@ -355,9 +370,7 @@ export const ModelsSettings: React.FC = () => {
                             setLanguageSearch("");
                           }
                         }}
-                        placeholder={t(
-                          "settings.general.language.searchPlaceholder",
-                        )}
+                        placeholder={t("settings.general.language.searchPlaceholder")}
                         className="w-full px-2 py-1 text-sm bg-mid-gray/10 border border-mid-gray/40 rounded-md focus:outline-none focus:ring-1 focus:ring-logo-primary"
                       />
                     </div>
@@ -422,7 +435,6 @@ export const ModelsSettings: React.FC = () => {
           ))}
         </div>
 
-        {/* Available Models Section */}
         {availableModels.length > 0 && (
           <div className="space-y-3">
             <h2 className="text-sm font-medium text-text/60">
