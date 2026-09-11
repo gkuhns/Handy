@@ -24,7 +24,6 @@ import Badge from "../ui/Badge";
 import { Button } from "../ui/Button";
 import { useSettingsStore } from "@/stores/settingsStore";
 
-// Get display text for model's language support
 const getLanguageDisplayText = (
   supportedLanguages: string[],
   t: (key: string, options?: Record<string, unknown>) => string,
@@ -40,12 +39,22 @@ const getLanguageDisplayText = (
   });
 };
 
-// Legacy = a blob (Url-sourced) .bin/ONNX model, kept runnable but no longer the
-// advertised download (catalog GGUFs supersede it).
 export const isLegacySource = (model: ModelInfo): boolean =>
   typeof model.source === "object" && "Url" in model.source;
 
-// Extract a GGUF quantization label from a filename, if present (e.g. "Q8_0").
+const ONNX_ENGINES = new Set([
+  "Parakeet",
+  "Moonshine",
+  "MoonshineStreaming",
+  "SenseVoice",
+  "GigaAM",
+  "Canary",
+  "Cohere",
+]);
+
+export const isOnnxEngine = (model: ModelInfo): boolean =>
+  ONNX_ENGINES.has(model.engine_type);
+
 const getQuantLabel = (filename: string): string | null => {
   const match = filename.match(
     /[._-](IQ\d+_\w+|Q\d+(?:_\w+)?|F16|BF16|F32)\.gguf$/i,
@@ -73,7 +82,7 @@ interface ModelCardProps {
   onDelete?: (modelId: string) => void;
   onCancel?: (modelId: string) => void;
   downloadProgress?: number;
-  downloadSpeed?: number; // MB/s
+  downloadSpeed?: number;
   showRecommended?: boolean;
 }
 
@@ -96,11 +105,7 @@ const ModelCard: React.FC<ModelCardProps> = ({
     (state) => state.settings?.debug_mode ?? false,
   );
   const isFeatured = variant === "featured";
-  // The active model is already loaded — re-selecting it just reloads it for no
-  // gain, so it is deliberately not clickable.
   const isClickable = status === "available" || status === "downloadable";
-
-  // Get translated model name and description
   const displayName = getTranslatedModelName(model, t);
   const displayDescription = getTranslatedModelDescription(model, t);
   const showModelSize =
@@ -152,16 +157,10 @@ const ModelCard: React.FC<ModelCardProps> = ({
       }}
       role={isClickable ? "button" : undefined}
       tabIndex={isClickable ? 0 : undefined}
-      className={[
-        baseClasses,
-        getVariantClasses(),
-        getInteractiveClasses(),
-        className,
-      ]
+      className={[baseClasses, getVariantClasses(), getInteractiveClasses(), className]
         .filter(Boolean)
         .join(" ")}
     >
-      {/* Top section: name/description + score bars */}
       <div className="flex justify-between items-center w-full">
         <div className="flex flex-col items-start flex-1 min-w-0">
           <div className="flex items-center gap-3 flex-wrap">
@@ -182,6 +181,16 @@ const ModelCard: React.FC<ModelCardProps> = ({
             {model.is_custom && (
               <Badge variant="secondary">{t("modelSelector.custom")}</Badge>
             )}
+            {isOnnxEngine(model) && (
+              <Badge variant="secondary">
+                {t("modelSelector.onnx", { defaultValue: "ONNX" })}
+              </Badge>
+            )}
+            {!isOnnxEngine(model) && !model.is_custom && (
+              <Badge variant="secondary">
+                {t("modelSelector.gguf", { defaultValue: "GGUF" })}
+              </Badge>
+            )}
             {isLegacySource(model) && (
               <Badge variant="secondary">{t("modelSelector.legacy")}</Badge>
             )}
@@ -192,9 +201,7 @@ const ModelCard: React.FC<ModelCardProps> = ({
               </Badge>
             )}
           </div>
-          <p className="text-text/60 text-sm leading-relaxed">
-            {displayDescription}
-          </p>
+          <p className="text-text/60 text-sm leading-relaxed">{displayDescription}</p>
         </div>
         {(model.accuracy_score > 0 || model.speed_score > 0) && (
           <div className="hidden sm:flex items-center ms-4">
@@ -228,7 +235,6 @@ const ModelCard: React.FC<ModelCardProps> = ({
 
       <hr className="w-full border-mid-gray/20" />
 
-      {/* Bottom row: tags + action buttons (full width) */}
       <div className="flex items-center gap-3 w-full -mb-0.5 mt-0.5 h-5">
         {capabilityLanguages.length > 0 && (
           <div
@@ -288,7 +294,6 @@ const ModelCard: React.FC<ModelCardProps> = ({
         )}
       </div>
 
-      {/* Download/extract progress */}
       {status === "downloading" && downloadProgress !== undefined && (
         <div className="w-full mt-3">
           <div className="w-full h-1.5 bg-mid-gray/20 rounded-full overflow-hidden">
@@ -334,9 +339,7 @@ const ModelCard: React.FC<ModelCardProps> = ({
           <div className="w-full h-1.5 bg-mid-gray/20 rounded-full overflow-hidden">
             <div className="h-full bg-logo-primary rounded-full animate-pulse w-full" />
           </div>
-          <p className="text-xs text-text/50 mt-1">
-            {t("modelSelector.verifyingGeneric")}
-          </p>
+          <p className="text-xs text-text/50 mt-1">{t("modelSelector.verifyingGeneric")}</p>
         </div>
       )}
       {status === "extracting" && (
@@ -344,9 +347,7 @@ const ModelCard: React.FC<ModelCardProps> = ({
           <div className="w-full h-1.5 bg-mid-gray/20 rounded-full overflow-hidden">
             <div className="h-full bg-logo-primary rounded-full animate-pulse w-full" />
           </div>
-          <p className="text-xs text-text/50 mt-1">
-            {t("modelSelector.extractingGeneric")}
-          </p>
+          <p className="text-xs text-text/50 mt-1">{t("modelSelector.extractingGeneric")}</p>
         </div>
       )}
     </div>
