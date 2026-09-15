@@ -64,7 +64,7 @@ rusqlite = { version = "0.37", features = ["bundled"] }
 tar = "0.4.44"
 flate2 = "1.0"
 sha2 = "0.10"
-transcribe-rs = { git = "https://github.com/gkuhns/transcribe-rs", rev = "1c6d140200007299d76de926f2b6f282e0039b0d", default-features = false, features = ["onnx", "ort-openvino"] }
+transcribe-rs = { git = "https://github.com/gkuhns/transcribe-rs", rev = "8c1228879435937d414e53f34eda5cbf4f9cdf30", default-features = false, features = ["onnx", "ort-openvino"] }
 transcribe-cpp = { version = "0.2.0", default-features = false }
 handy-keys = "0.3.4"
 ferrous-opencc = "0.2.3"
