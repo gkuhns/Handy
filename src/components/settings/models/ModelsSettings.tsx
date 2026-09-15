@@ -37,6 +37,9 @@ const ONNX_ENGINES = new Set([
 const isOnnxModel = (model: ModelInfo): boolean =>
   ONNX_ENGINES.has(model.engine_type);
 
+const formatLabel = (value: "all" | "gguf" | "onnx") =>
+  value === "all" ? "All" : value === "onnx" ? "ONNX" : "GGUF";
+
 export const ModelsSettings: React.FC = () => {
   const { t } = useTranslation();
   const [switchingModelId, setSwitchingModelId] = useState<string | null>(null);
@@ -286,8 +289,8 @@ export const ModelsSettings: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setFormatDropdownOpen(!formatDropdownOpen)}
-                  title={t("settings.models.filters.format")}
-                  aria-label={t("settings.models.filters.format")}
+                  title="Filter by format"
+                  aria-label="Filter by format"
                   className={`flex items-center gap-1.5 h-8 px-3 text-sm font-medium rounded-lg transition-colors ${
                     formatFilter !== "all"
                       ? "bg-logo-primary/20 text-logo-primary"
@@ -295,13 +298,7 @@ export const ModelsSettings: React.FC = () => {
                   }`}
                 >
                   <Cpu className="w-3.5 h-3.5" />
-                  <span className="max-w-[120px] truncate">
-                    {formatFilter === "all"
-                      ? t("settings.models.filters.allFormats")
-                      : formatFilter === "onnx"
-                        ? t("settings.models.filters.onnx")
-                        : t("settings.models.filters.gguf")}
-                  </span>
+                  <span>{formatLabel(formatFilter)}</span>
                   <ChevronDown
                     className={`w-3.5 h-3.5 transition-transform ${
                       formatDropdownOpen ? "rotate-180" : ""
@@ -309,7 +306,7 @@ export const ModelsSettings: React.FC = () => {
                   />
                 </button>
                 {formatDropdownOpen && (
-                  <div className="absolute top-full right-0 mt-1 w-44 bg-background border border-mid-gray/80 rounded-lg shadow-lg z-50 overflow-hidden">
+                  <div className="absolute top-full right-0 mt-1 w-28 bg-background border border-mid-gray/80 rounded-lg shadow-lg z-50 overflow-hidden">
                     {(["all", "onnx", "gguf"] as const).map((value) => (
                       <button
                         key={value}
@@ -324,11 +321,7 @@ export const ModelsSettings: React.FC = () => {
                             : "hover:bg-mid-gray/10"
                         }`}
                       >
-                        {value === "all"
-                          ? t("settings.models.filters.allFormats")
-                          : value === "onnx"
-                            ? t("settings.models.filters.onnx")
-                            : t("settings.models.filters.gguf")}
+                        {formatLabel(value)}
                       </button>
                     ))}
                   </div>
