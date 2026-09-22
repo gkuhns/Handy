@@ -3,7 +3,7 @@
     "resources": {
       "resources": "resources",
       "transcribe-libs": ".",
-      "openvino-ep": "."
+      "openvino-ep": "openvino-ep"
     }
   }
 }
